@@ -8,12 +8,9 @@ window.NCL_CONFIG = {
   fromDate: "01-07-2024",            // shown in the abstract title
   credit: "Designed & Developed by Kola.Bapuji, IT Core Team, Chittoor",
 
-  /* GitHub repository that hosts this site.
-     Leave owner/repo blank to detect them from the address
-     (https://OWNER.github.io/REPO/). Leave branch blank to use the
-     repository's default branch. "folder" is only needed when the site
-     is not at the top of the repository (for example "docs"). */
-  github: { owner: "", repo: "", branch: "", folder: "" },
+  /* Web app URL of the Google Apps Script (ends with /exec).
+     Paste it between the quotes after deploying Code.gs. */
+  apiUrl: "",
 
   /* Sub-divisions and their police stations, in the order they appear
      in the abstract (same as the SD sheet of the Excel workbook). */

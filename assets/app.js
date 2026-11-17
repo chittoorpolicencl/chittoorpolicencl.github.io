@@ -8,7 +8,6 @@
       return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
     });
   };
-  var DATA_PATH = { 60: "data/ncl60.json", 90: "data/ncl90.json" };
   var VIEWS = ["abstract", "lt", "bet", "gt", "all"];
 
   var state = {
@@ -17,8 +16,10 @@
     asOn: NCL.todayIso(),
     tab: "60", view: "abstract",
     f: { sd: "", ps: "", cat: "", q: "" },
-    preview: false
+    preview: false, problem: ""
   };
+  var published = { 60: null, 90: null };   // what is saved on the server now
+  var pending = { 60: null, 90: null };     // files chosen but not published yet
 
   /* ---------------- start ---------------- */
   $("unitName").textContent = cfg.unitName;
@@ -38,12 +39,25 @@
   window.addEventListener("hashchange", readHash);
 
   readHash(true);
-  Promise.all([60, 90].map(function (L) {
-    return fetch(DATA_PATH[L] + "?t=" + Date.now(), { cache: "no-store" })
-      .then(function (r) { return r.ok ? r.json() : null; })
-      .catch(function () { return null; })
-      .then(function (j) { state.data[L] = j && Array.isArray(j.rows) ? j : null; });
-  })).then(function () { recompute(); render(); });
+  loadData();
+
+  function loadData() {
+    if (!cfg.apiUrl) { state.problem = "The site is not connected yet: paste the Apps Script web app URL into <b>apiUrl</b> in assets/config.js."; render(); return; }
+    $("view").innerHTML = '<div class="sheet"><div class="empty">Loading…</div></div>';
+    fetch(cfg.apiUrl + (cfg.apiUrl.indexOf("?") < 0 ? "?" : "&") + "t=" + Date.now())
+      .then(function (r) { return r.json(); })
+      .then(function (j) {
+        if (!j.ok) throw new Error(j.error || "error");
+        [60, 90].forEach(function (L) {
+          var d = j["d" + L];
+          state.data[L] = d && Array.isArray(d.rows) ? d : null;
+          published[L] = state.data[L] ? { file: d.meta && d.meta.file, n: d.rows.length } : null;
+        });
+        state.problem = "";
+      })
+      .catch(function () { state.problem = "Could not load the data. Check the internet connection, and the apiUrl in assets/config.js."; })
+      .then(function () { recompute(); render(); });
+  }
 
   function readHash(silent) {
     var m = /^#(60|90)\/(\w+)$/.exec(location.hash);
@@ -76,7 +90,7 @@
     renderNotice(R);
     renderMeta();
     if (!has) {
-      $("view").innerHTML = '<div class="sheet"><div class="empty"><b>No data has been uploaded yet.</b><br>' +
+      $("view").innerHTML = '<div class="sheet"><div class="empty"><b>No records are available.</b><br>' +
         'Use <b>Admin</b> (top right) to sign in and upload the 60 DAYS and 90 DAYS Excel files.</div></div>';
       return;
     }
@@ -101,6 +115,7 @@
 
   function renderNotice(R) {
     var parts = [];
+    if (state.problem) parts.push(state.problem);
     if (state.preview) parts.push("<b>Preview only.</b> These files are loaded on this device and are not published yet. Open Admin and press Publish.");
     if (state.asOn !== NCL.todayIso()) parts.push("Days are calculated as on <b>" + NCL.dmy(state.asOn) + "</b>, not today.");
     if (R) {
@@ -283,117 +298,92 @@
     });
   }
 
-  /* ---------------- admin: GitHub sign-in and upload ---------------- */
-  var API = "https://api.github.com";
-  var KEY = "ncl-admin";
-  var pending = { 60: null, 90: null };       // parsed files waiting to be published
+  /* ---------------- admin: sign-in, upload, delete ---------------- */
+  var auth = null;                            // { user, pass } — kept only while this page is open
 
-  function detectRepo() {
-    var g = cfg.github || {}, owner = g.owner || "", repo = g.repo || "", h = location.hostname;
-    if (/\.github\.io$/i.test(h)) {
-      if (!owner) owner = h.split(".")[0];
-      if (!repo) {
-        var seg = location.pathname.split("/").filter(Boolean)[0];
-        repo = seg && !/\.html?$/i.test(seg) ? seg : h;
-      }
-    }
-    return { owner: owner, repo: repo };
-  }
-  function session() {
-    try { return JSON.parse(sessionStorage.getItem(KEY) || localStorage.getItem(KEY) || "null"); } catch (e) { return null; }
-  }
-  function setSession(s, remember) {
-    try {
-      sessionStorage.removeItem(KEY); localStorage.removeItem(KEY);
-      if (s) (remember ? localStorage : sessionStorage).setItem(KEY, JSON.stringify(s));
-    } catch (e) { /* storage unavailable: stay signed in for this page only */ }
-    memSession = s;
-  }
-  var memSession = session();
-
-  function gh(s, method, path, body) {
-    return fetch(API + "/repos/" + s.owner + "/" + s.repo + path, {
-      method: method,
-      headers: { "Authorization": "Bearer " + s.token, "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" },
-      body: body ? JSON.stringify(body) : undefined
-    }).then(function (r) {
-      return r.json().catch(function () { return {}; }).then(function (j) {
-        if (!r.ok) {
-          var e = new Error(r.status === 401 ? "The access token was not accepted (wrong or expired)."
-            : r.status === 404 ? "Repository not found, or the token has no access to it."
-            : r.status === 403 ? "The token is not allowed to do this. It needs Contents: Read and write on this repository."
-            : (j.message || "GitHub error " + r.status));
-          e.status = r.status; throw e;
-        }
-        return j;
-      });
+  function api(body) {
+    return fetch(cfg.apiUrl, {
+      method: "POST", headers: { "Content-Type": "text/plain;charset=utf-8" },
+      body: JSON.stringify(Object.assign({ user: auth.user, pass: auth.pass }, body))
+    }).then(function (r) { return r.json(); }, function () {
+      throw new Error("Could not reach the server. Check the internet connection.");
+    }).then(function (j) {
+      if (!j || !j.ok) { var e = new Error((j && j.error) || "The request failed."); e.auth = !!(j && j.auth); throw e; }
+      return j;
     });
   }
 
   function openAdmin() { drawAdmin(); $("adminDlg").showModal(); }
+  function note(kind, text) { $("aMsg").innerHTML = text ? '<div class="msg ' + kind + '">' + text + "</div>" : ""; }
 
   function drawAdmin(msg) {
-    var s = memSession, body = $("adminBody");
-    if (!s) {
-      var d = detectRepo();
-      body.innerHTML =
-        '<p class="help" style="margin-top:0">Sign in with a GitHub access token for the repository that hosts this site. ' +
-        "Only someone who can write to that repository can upload data.</p>" +
-        '<div class="row"><div><label for="aOwner">GitHub user / organisation</label><input type="text" id="aOwner" value="' + esc(d.owner) + '"></div>' +
-        '<div><label for="aRepo">Repository</label><input type="text" id="aRepo" value="' + esc(d.repo) + '"></div></div>' +
-        '<label for="aTok">Access token</label><input type="password" id="aTok" autocomplete="off" placeholder="github_pat_…">' +
-        '<label class="chk"><input type="checkbox" id="aRem"> Keep me signed in on this device</label>' +
-        '<p class="help">Create the token at GitHub → Settings → Developer settings → Fine-grained tokens, ' +
-        "limited to this repository, with <b>Contents: Read and write</b>. Steps are in README.md.</p>" +
-        '<div id="aMsg"></div><div class="actions"><button class="btn primary" id="aIn" type="button">Sign in</button></div>';
-      $("aIn").onclick = signIn;
-      $("aTok").onkeydown = function (e) { if (e.key === "Enter") signIn(); };
+    var body = $("adminBody");
+    if (!cfg.apiUrl) {
+      body.innerHTML = '<div class="msg err">Admin is not set up yet. Deploy the Google Apps Script and paste its web app URL into ' +
+        "<b>apiUrl</b> in assets/config.js (see README).</div>";
       return;
     }
+    if (!auth) {
+      body.innerHTML =
+        '<label for="aUser">User name</label><input type="text" id="aUser" autocomplete="username">' +
+        '<label for="aPass">Password</label><input type="password" id="aPass" autocomplete="current-password">' +
+        '<div id="aMsg">' + (msg || "") + '</div><div class="actions"><button class="btn primary" id="aIn" type="button">Login</button></div>';
+      $("aIn").onclick = signIn;
+      $("aPass").onkeydown = function (e) { if (e.key === "Enter") signIn(); };
+      return;
+    }
+    var any = published[60] || published[90];
     body.innerHTML =
-      '<p class="help" style="margin-top:0">Signed in to <b>' + esc(s.owner + "/" + s.repo) + "</b>" + (s.login ? " as <b>" + esc(s.login) + "</b>" : "") +
-      '. <button class="btn" id="aOut" type="button" style="padding:2px 8px;margin-left:6px">Sign out</button></p>' +
+      '<p class="help" style="margin-top:0">Logged in as <b>' + esc(auth.user) + "</b>. " +
+      '<button class="btn" id="aOut" type="button" style="padding:2px 8px;margin-left:6px">Logout</button></p>' +
+      "<h3>Upload Excel files</h3>" +
       [60, 90].map(function (L) {
         return '<div class="file"><b>' + L + ' DAYS Excel file</b><input type="file" id="aF' + L + '" accept=".xlsx,.xls,.xlsm,.csv">' +
           '<div class="sum" id="aS' + L + '">' + summary(L) + "</div></div>";
       }).join("") +
-      '<p class="help">Choose one or both files (columns A:H: S.NO, DISTRICT, POLICE STATION, FIR NO, FIR DT, ACTS &amp; SEC, ' +
-      "Stage Of The Case, CHARGESHEET DATE). The reports behind this window show a preview; nothing is saved until you press Publish.</p>" +
-      '<div id="aMsg">' + (msg || "") + '</div><div class="actions"><button class="btn primary" id="aPub" type="button"' +
-      (pending[60] || pending[90] ? "" : " disabled") + ">Publish</button></div>";
-    $("aOut").onclick = function () { setSession(null); drawAdmin(); };
+      '<p class="help">Choose one or both files (columns A:H). A new file replaces the existing records of that type. ' +
+      "The reports behind this window show a preview; nothing is saved until you press Upload.</p>" +
+      '<div class="actions"><button class="btn primary" id="aPub" type="button"' +
+      (pending[60] || pending[90] ? "" : " disabled") + ">Upload</button></div>" +
+      "<h3>Delete existing records</h3>" +
+      '<div class="actions del">' +
+      [60, 90].map(function (L) {
+        return '<button class="btn danger" type="button" data-del="' + L + '"' + (published[L] ? "" : " disabled") + ">Delete " + L + " DAYS" +
+          (published[L] ? " (" + published[L].n + ")" : "") + "</button>";
+      }).join("") +
+      '<button class="btn danger" type="button" data-del="60,90"' + (any ? "" : " disabled") + ">Delete all</button></div>" +
+      '<div id="aMsg">' + (msg || "") + "</div>";
+    $("aOut").onclick = function () { auth = null; drawAdmin(); };
     [60, 90].forEach(function (L) { $("aF" + L).onchange = function () { pick(L, this.files[0]); }; });
     $("aPub").onclick = publish;
+    body.querySelectorAll("[data-del]").forEach(function (b) {
+      b.onclick = function () { removeRecords(b.dataset.del.split(",").map(Number)); };
+    });
   }
 
   function summary(L) {
     var p = pending[L];
-    if (!p) {
-      var m = state.data[L] && !state.preview && state.data[L].meta;
-      return m ? "Published now: " + esc(m.file || "") + " (" + state.data[L].rows.length + " cases)" : "Nothing published yet.";
-    }
+    if (!p) return published[L] ? "Existing records: " + esc(published[L].file || "") + " (" + published[L].n + " cases)" : "No records at present.";
     var t = "Ready: " + esc(p.meta.file) + " — " + p.meta.read + " rows read, " + p.rows.length + " cases kept";
     if (p.meta.removed) t += ", " + p.meta.removed + " removed (excluded stations)";
     if (p.meta.badFirDate) t += ", " + p.meta.badFirDate + " with unreadable FIR date";
     return t + ".";
   }
-  function note(kind, text) { $("aMsg").innerHTML = text ? '<div class="msg ' + kind + '">' + text + "</div>" : ""; }
 
   function signIn() {
-    var s = { owner: $("aOwner").value.trim(), repo: $("aRepo").value.trim(), token: $("aTok").value.trim() };
-    if (!s.owner || !s.repo || !s.token) { note("err", "Enter the user, repository and access token."); return; }
-    var remember = $("aRem").checked;
+    var u = $("aUser").value.trim(), p = $("aPass").value;
+    if (!u || !p) { note("err", "Enter the user name and password."); return; }
+    auth = { user: u, pass: p };
     note("wait", "Checking…"); $("aIn").disabled = true;
-    gh(s, "GET", "").then(function (repo) {
-      if (!repo.permissions || !repo.permissions.push) throw new Error("This token can read the repository but cannot write to it.");
-      s.branch = (cfg.github && cfg.github.branch) || repo.default_branch;
-      return fetch(API + "/user", { headers: { "Authorization": "Bearer " + s.token } })
-        .then(function (r) { return r.ok ? r.json() : {}; }).catch(function () { return {}; })
-        .then(function (u) { s.login = u.login || ""; setSession(s, remember); drawAdmin(); });
-    }).catch(function (e) {
-      note("err", esc(e.message === "Failed to fetch" ? "Could not reach GitHub. Check the internet connection." : e.message));
+    api({ action: "login" }).then(function () { drawAdmin(); }, function (e) {
+      auth = null; note("err", esc(e.message));
       if ($("aIn")) $("aIn").disabled = false;
     });
+  }
+
+  function failed(e, what) {
+    if (e.auth) { auth = null; drawAdmin('<div class="msg err">' + esc(e.message) + "</div>"); return; }
+    note("err", what + " " + esc(e.message));
   }
 
   function pick(L, file) {
@@ -414,40 +404,27 @@
   }
 
   function publish() {
-    var s = memSession, items = [60, 90].filter(function (L) { return pending[L]; });
-    if (!s || !items.length) return;
-    var folder = ((cfg.github && cfg.github.folder) || "").replace(/^\/+|\/+$/g, "");
-    $("aPub").disabled = true; note("wait", "Publishing to GitHub…");
-    var head, blobs;
-    gh(s, "GET", "/git/ref/heads/" + encodeURIComponent(s.branch)).then(function (ref) {
-      head = ref.object.sha;
-      return Promise.all(items.map(function (L) {
-        return gh(s, "POST", "/git/blobs", { content: JSON.stringify(pending[L]), encoding: "utf-8" });
-      }));
-    }).then(function (b) {
-      blobs = b;
-      return gh(s, "GET", "/git/commits/" + head);
-    }).then(function (commit) {
-      return gh(s, "POST", "/git/trees", {
-        base_tree: commit.tree.sha,
-        tree: items.map(function (L, i) {
-          return { path: (folder ? folder + "/" : "") + DATA_PATH[L], mode: "100644", type: "blob", sha: blobs[i].sha };
-        })
-      });
-    }).then(function (tree) {
-      return gh(s, "POST", "/git/commits", {
-        message: "Update NCL data: " + items.map(function (L) { return L + " DAYS"; }).join(" and ") + " (" + NCL.dmy(NCL.todayIso()) + ")",
-        tree: tree.sha, parents: [head]
-      });
-    }).then(function (c) {
-      return gh(s, "PATCH", "/git/refs/heads/" + encodeURIComponent(s.branch), { sha: c.sha });
-    }).then(function () {
-      pending = { 60: null, 90: null }; state.preview = false; render();
-      drawAdmin('<div class="msg ok">Published. Everyone will see the new reports after GitHub finishes updating the site (about a minute).</div>');
-    }).catch(function (e) {
-      if (e.status === 401) { setSession(null); drawAdmin(); note("err", "Your sign-in has expired. Sign in again and publish."); return; }
-      note("err", "Not published. " + esc(e.message === "Failed to fetch" ? "Could not reach GitHub." : e.message));
-      $("aPub").disabled = false;
-    });
+    var items = [60, 90].filter(function (L) { return pending[L]; }), files = {};
+    if (!auth || !items.length) return;
+    items.forEach(function (L) { files[L] = pending[L]; });
+    $("aPub").disabled = true; note("wait", "Uploading…");
+    api({ action: "save", files: files }).then(function () {
+      items.forEach(function (L) { published[L] = { file: pending[L].meta.file, n: pending[L].rows.length }; pending[L] = null; });
+      state.preview = false; render();
+      drawAdmin('<div class="msg ok">Uploaded. The new reports are now visible to everyone.</div>');
+    }, function (e) { failed(e, "Not uploaded."); if ($("aPub")) $("aPub").disabled = false; });
+  }
+
+  function removeRecords(which) {
+    which = which.filter(function (L) { return published[L]; });
+    if (!auth || !which.length) return;
+    var label = which.map(function (L) { return L + " DAYS"; }).join(" and ");
+    if (!window.confirm("Delete the existing " + label + " records?\nThe reports will be empty until a new file is uploaded.")) return;
+    note("wait", "Deleting…");
+    api({ action: "delete", which: which }).then(function () {
+      which.forEach(function (L) { published[L] = null; if (!pending[L]) state.data[L] = null; });
+      recompute(); render();
+      drawAdmin('<div class="msg ok">' + label + " records deleted.</div>");
+    }, function (e) { failed(e, "Not deleted."); });
   }
 })();

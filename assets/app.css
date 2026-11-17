@@ -75,6 +75,11 @@ dialog::backdrop{background:rgba(15,25,45,.5)}
 #adminBody .help{font-size:12.5px;color:var(--muted);margin:8px 0 0}
 #adminBody .msg{margin-top:12px;padding:8px 10px;border-radius:6px;font-size:13px}
 .msg.err{background:#fdecea;color:#8c1d18} .msg.ok{background:#e6f4ea;color:#1e6b3a} .msg.wait{background:#e8f1fd;color:#174c9b}
+#adminBody h3{font-size:13.5px;margin:16px 0 4px;padding-top:12px;border-top:1px solid var(--line)}
+#adminBody .help+h3{border-top:0;padding-top:0;margin-top:8px}
+#adminBody .actions.del{justify-content:flex-start;margin-top:8px;flex-wrap:wrap}
+.btn.danger{border-color:#d9a5a1;color:var(--red)}
+.btn.danger:hover{background:var(--red);border-color:var(--red);color:#fff}
 .file{border:1px dashed var(--line);border-radius:8px;padding:10px 12px;margin-top:10px}
 .file b{display:block;margin-bottom:6px}
 .file .sum{font-size:12.5px;color:var(--muted);margin-top:6px}
