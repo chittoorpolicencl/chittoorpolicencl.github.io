@@ -10,7 +10,7 @@ window.NCL_CONFIG = {
 
   /* Web app URL of the Google Apps Script (ends with /exec).
      Paste it between the quotes after deploying Code.gs. */
-  apiUrl: "",
+  apiUrl: "https://script.google.com/macros/s/AKfycbyJkZ971SIaLn60VL6qooWwfWINcZNa2q3KXZ9q1vhG7l9nbKTMvQzFe1311X_4MVAt/exec",
 
   /* Sub-divisions and their police stations, in the order they appear
      in the abstract (same as the SD sheet of the Excel workbook). */
