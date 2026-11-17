@@ -108,10 +108,21 @@
       lt: "UI<" + warn + "_DAYS",
       bet: "UI_BET_" + warn + "-" + limit + "_DAYS",
       gt: "UI>" + limit + "_DAYS",
-      order: null
+      totalCharged: "TOTAL_CHARGED",
+      totalUi: "TOTAL_UI_CASES"
     };
   }
   function categoryList(L) { return [L.within, L.after, L.lad, L.lt, L.bet, L.gt]; }
+  /* Abstract / Remarks criteria: the six categories plus the two totals */
+  function criteriaList(L) { return [L.totalCharged, L.within, L.after, L.lad, L.totalUi, L.lt, L.bet, L.gt]; }
+  function criteriaGroups(L) {
+    var g = {};
+    g[L.totalCharged] = [L.within, L.after, L.lad];
+    g[L.totalUi] = [L.lt, L.bet, L.gt];
+    return g;
+  }
+  /* [within, after, lad, lt, bet, gt] -> [TOTAL_CHARGED, within, after, lad, TOTAL_UI, lt, bet, gt] */
+  function expand(c) { return [c[0] + c[1] + c[2], c[0], c[1], c[2], c[3] + c[4] + c[5], c[3], c[4], c[5]]; }
 
   function sdLookup(cfg) {
     var m = {};
@@ -181,14 +192,14 @@
       var rows = g.stations.map(function (s, i) {
         var c = byPs[key(s)] || zero();
         c.forEach(function (v, j) { tot[j] += v; grand[j] += v; });
-        return { sno: i + 1, ps: s, counts: c, total: sum(c) };
+        return { sno: i + 1, ps: s, counts: expand(c), total: sum(c) };
       });
-      return { code: g.code, title: g.title, totalLabel: g.totalLabel, rows: rows, counts: tot, total: sum(tot) };
+      return { code: g.code, title: g.title, totalLabel: g.totalLabel, rows: rows, counts: expand(tot), total: sum(tot) };
     });
     return {
       title: "NCL REPORTS STATUS - SD WISE & PS WISE ABSTRACT OF - " + limit + " DAYS CASES - FROM " +
              cfg.fromDate + " TO " + dmy(addDays(records.asOn || todayIso(), -1)),
-      columns: cats, groups: groups, grand: grand, grandTotal: sum(grand),
+      columns: criteriaList(L), groups: groups, grand: expand(grand), grandTotal: sum(grand),
       unmatched: unmatched, unclassified: unclassified
     };
   }
@@ -219,90 +230,114 @@
              records: recs, abstract: abstract(recs, limit, cfg), lists: lists };
   }
 
-  /* ---------- Excel export (ExcelJS is passed in) ---------- */
-  var THIN = { style: "thin", color: { argb: "FF000000" } };
-  var BORDER = { top: THIN, left: THIN, bottom: THIN, right: THIN };
+  /* ---------- Excel export (ExcelJS is passed in) ----------
+     Every sheet: Legal paper, landscape, fitted to the page width. */
+  var LINE = { style: "thin", color: { argb: "FF7F7F7F" } };
+  var BORDER = { top: LINE, left: LINE, bottom: LINE, right: LINE };
+  var C = { title: "FF1F3864", head: "FF2F5597", section: "FFBDD7EE", total: "FFE2EFDA", grand: "FFFFD966",
+            sum: "FFF2F2F2", zebra: "FFF5F8FC", red: "FFC00000", white: "FFFFFFFF", ink: "FF000000" };
   function fill(argb) { return { type: "pattern", pattern: "solid", fgColor: { argb: argb } }; }
   function xlDate(iso) { return isIso(iso) ? new Date(iso + "T00:00:00Z") : (iso || null); }
 
+  /* opt: bold, size, fill, color, align[] (per column), red[] / shade[] (column numbers) */
   function styleRow(row, n, opt) {
     for (var c = 1; c <= n; c++) {
-      var cell = row.getCell(c);
+      var cell = row.getCell(c), red = opt.red && opt.red.indexOf(c) >= 0, shade = opt.shade && opt.shade.indexOf(c) >= 0;
       cell.border = BORDER;
       cell.alignment = { vertical: "middle", wrapText: true, horizontal: (opt.align && opt.align[c - 1]) || "center" };
-      if (opt.bold) cell.font = { bold: true, size: opt.size || 11 };
-      if (opt.fill) cell.fill = fill(opt.fill);
+      cell.font = { name: "Calibri", size: opt.size || 11, bold: !!(opt.bold || red || shade),
+                    color: { argb: red ? C.red : (opt.color || C.ink) } };
+      if (opt.fill || shade) cell.fill = fill(opt.fill || C.sum);
     }
   }
+  function sheet(wb, name, widths, fitHeight, credit) {
+    var ws = wb.addWorksheet(name, {
+      pageSetup: { paperSize: 5, orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: fitHeight,
+                   horizontalCentered: true,
+                   margins: { left: 0.4, right: 0.4, top: 0.5, bottom: 0.55, header: 0.2, footer: 0.25 } },
+      headerFooter: { oddFooter: "&L&8" + String(credit || "").replace(/&/g, "&&") + "&R&8Page &P of &N" }
+    });
+    ws.columns = widths.map(function (w) { return { width: w }; });
+    return ws;
+  }
+  function titleRow(ws, text, n) {
+    ws.addRow([text]); ws.mergeCells(1, 1, 1, n);
+    styleRow(ws.getRow(1), n, { bold: true, size: 14, fill: C.title, color: C.white }); ws.getRow(1).height = 32;
+  }
+  function headRow(ws, cells, height, red) {
+    var r = ws.addRow(cells);
+    styleRow(r, cells.length, { bold: true, fill: C.head, color: C.white });
+    (red || []).forEach(function (c) { r.getCell(c).fill = fill(C.red); });
+    r.height = height;
+  }
 
-  function addListSheet(wb, name, title, recs) {
-    var ws = wb.addWorksheet(name, { pageSetup: { paperSize: 5, orientation: "portrait", scale: 80 } });
-    ws.columns = [{ width: 6 }, { width: 26 }, { width: 11 }, { width: 12 }, { width: 44 }, { width: 10 }, { width: 10 }];
-    ws.addRow([title]); ws.mergeCells(1, 1, 1, 7);
-    styleRow(ws.getRow(1), 7, { bold: true, size: 12, fill: "FFC6E0B4" }); ws.getRow(1).height = 30;
-    ws.addRow(["S.NO", "POLICE STATION", "FIR NO", "FIR DT", "ACTS & SEC", "Days Duration", "SUB_DIV"]);
-    styleRow(ws.getRow(2), 7, { bold: true, fill: "FFFFFF99" }); ws.getRow(2).height = 30;
-    var al = ["center", "left", "left", "center", "left", "center", "center"];
+  function addListSheet(wb, name, title, recs, credit) {
+    var ws = sheet(wb, name, [7, 30, 13, 13, 88, 12, 12], 0, credit);
+    titleRow(ws, title, 7);
+    headRow(ws, ["S.NO", "POLICE STATION", "FIR NO", "FIR DT", "ACTS & SEC", "Days Duration", "SUB_DIV"], 34);
+    var al = ["center", "left", "center", "center", "left", "center", "center"];
     recs.forEach(function (o, i) {
       var row = ws.addRow([i + 1, o.ps, o.fir, xlDate(o.fd), o.acts, o.days, o.sd]);
       row.getCell(4).numFmt = "dd-mm-yyyy"; row.getCell(3).numFmt = "@";
-      styleRow(row, 7, { align: al });
+      styleRow(row, 7, { align: al, fill: i % 2 ? C.zebra : null });
+      row.getCell(6).font = { name: "Calibri", size: 11, bold: true };
     });
     ws.pageSetup.printTitlesRow = "1:2";
+    ws.views = [{ state: "frozen", ySplit: 2 }];
     return ws;
   }
 
-  function addAllSheet(wb, name, recs) {
-    var ws = wb.addWorksheet(name, { pageSetup: { paperSize: 5, orientation: "landscape", scale: 80 } });
-    ws.columns = [{ width: 7 }, { width: 25 }, { width: 10 }, { width: 12 }, { width: 50 }, { width: 15 },
-                  { width: 12 }, { width: 12 }, { width: 10 }, { width: 26.5 }, { width: 12 }];
-    ws.addRow(["S.NO", "POLICE STATION", "FIR NO", "FIR DT", "ACTS & SEC", "Stage Of The Case",
-               "CHARGESHEET DATE", "Case Stage", "Days Duration", "Remarks", "SUB_DIV"]);
-    styleRow(ws.getRow(1), 11, { bold: true, fill: "FFFFF2CC" }); ws.getRow(1).height = 30;
-    var al = ["center", "left", "left", "center", "left", "left", "center", "center", "center", "left", "left"];
-    recs.forEach(function (o) {
-      var row = ws.addRow([o.sno, o.ps, o.fir, xlDate(o.fd), o.acts, o.stage, xlDate(o.cd), o.caseStage, o.days, o.remark, o.sd]);
+  function addAllSheet(wb, name, title, recs, L, credit) {
+    var ws = sheet(wb, name, [6, 25, 10, 12, 46, 14, 13, 11, 9, 25, 9], 0, credit);
+    titleRow(ws, title, 11);
+    headRow(ws, ["S.NO", "POLICE STATION", "FIR NO", "FIR DT", "ACTS & SEC", "Stage Of The Case",
+                 "CHARGESHEET DATE", "Case Stage", "Days Duration", "Remarks", "SUB_DIV"], 34);
+    var al = ["center", "left", "center", "center", "left", "left", "center", "center", "center", "left", "center"];
+    recs.forEach(function (o, i) {
+      var row = ws.addRow([i + 1, o.ps, o.fir, xlDate(o.fd), o.acts, o.stage, xlDate(o.cd), o.caseStage, o.days, o.remark, o.sd]);
       row.getCell(4).numFmt = "dd-mm-yyyy"; row.getCell(7).numFmt = "dd-mm-yyyy"; row.getCell(3).numFmt = "@";
-      styleRow(row, 11, { align: al });
+      styleRow(row, 11, { align: al, fill: i % 2 ? C.zebra : null, red: o.remark === L.gt ? [9, 10] : null });
     });
-    ws.pageSetup.printTitlesRow = "1:1";
-    ws.views = [{ state: "frozen", ySplit: 1 }];
+    ws.pageSetup.printTitlesRow = "1:2";
+    ws.views = [{ state: "frozen", ySplit: 2 }];
     return ws;
   }
 
-  function addAbstractSheet(wb, name, ab) {
-    var ws = wb.addWorksheet(name, { pageSetup: { paperSize: 5, orientation: "portrait", fitToPage: true, fitToWidth: 1, fitToHeight: 1 } });
-    ws.columns = [{ width: 6 }, { width: 28 }].concat(ab.columns.map(function () { return { width: 13 }; }), [{ width: 10 }]);
-    var n = 9, al = ["center", "left"];
-    ws.addRow([ab.title]); ws.mergeCells(1, 1, 1, n);
-    styleRow(ws.getRow(1), n, { bold: true, size: 12 }); ws.getRow(1).height = 34;
-    ws.addRow(["S.NO", "POLICE STATION"].concat(ab.columns, ["Grand Total"]));
-    styleRow(ws.getRow(2), n, { bold: true, fill: "FFFFF2CC" }); ws.getRow(2).height = 44;
+  function addAbstractSheet(wb, name, ab, credit) {
+    var n = 11, SUM = [3, 7], RED = [10], al = ["center", "left"];
+    var ws = sheet(wb, name, [6, 30, 18, 24, 23, 19, 19, 14, 22, 14, 14], 1, credit);
+    titleRow(ws, ab.title, n);
+    headRow(ws, ["S.NO", "POLICE STATION"].concat(ab.columns, ["Grand Total"]), 48, RED);
     ab.groups.forEach(function (g) {
       var r = ws.addRow([g.title]); ws.mergeCells(r.number, 1, r.number, n);
-      styleRow(r, n, { bold: true, fill: "FFDDEBF7" });
-      g.rows.forEach(function (x) { styleRow(ws.addRow([x.sno, x.ps].concat(x.counts, [x.total])), n, { align: al }); });
+      styleRow(r, n, { bold: true, size: 12, fill: C.section });
+      g.rows.forEach(function (x) {
+        styleRow(ws.addRow([x.sno, x.ps].concat(x.counts, [x.total])), n, { align: al, red: RED, shade: SUM });
+      });
       r = ws.addRow([g.totalLabel, null].concat(g.counts, [g.total])); ws.mergeCells(r.number, 1, r.number, 2);
-      styleRow(r, n, { bold: true, fill: "FFE2EFDA" });
+      styleRow(r, n, { bold: true, fill: C.total, red: RED });
     });
-    styleRow(ws.addRow([null, "Grand Total"].concat(ab.grand, [ab.grandTotal])), n, { bold: true, fill: "FFFFE699" });
+    styleRow(ws.addRow([null, "Grand Total"].concat(ab.grand, [ab.grandTotal])), n, { bold: true, size: 12, fill: C.grand, red: RED, align: al });
+    ws.views = [{ state: "frozen", ySplit: 2 }];
     return ws;
   }
 
+  function allTitle(R) { return "NEW CRIMINAL LAWS - " + R.limit + " DAYS CASES - ALL CASES AS ON " + dmy(R.asOn); }
+
   /* which: array of {limit, key}. rep: {60: build(...), 90: build(...)} */
-  function buildWorkbook(ExcelJS, rep, which) {
+  function buildWorkbook(ExcelJS, rep, which, credit) {
     var wb = new ExcelJS.Workbook();
     which.forEach(function (w) {
       var R = rep[w.limit]; if (!R) return;
       var d = R.defs[w.key];
-      if (w.key === "abstract") addAbstractSheet(wb, d.sheet, R.abstract);
-      else if (w.key === "all") addAllSheet(wb, d.sheet, w.records || R.records);
-      else addListSheet(wb, d.sheet, d.title + dmy(R.asOn), R.lists[w.key]);
+      if (w.key === "abstract") addAbstractSheet(wb, d.sheet, R.abstract, credit);
+      else if (w.key === "all") addAllSheet(wb, d.sheet, allTitle(R), w.records || R.records, R.labels, credit);
+      else addListSheet(wb, d.sheet, d.title + dmy(R.asOn), w.records || R.lists[w.key], credit);
     });
     return wb;
   }
 
   return { importRows: importRows, compute: compute, abstract: abstract, build: build, labels: labels,
-           categoryList: categoryList, reportDefs: reportDefs, buildWorkbook: buildWorkbook,
+           categoryList: categoryList, criteriaList: criteriaList, criteriaGroups: criteriaGroups, allTitle: allTitle, reportDefs: reportDefs, buildWorkbook: buildWorkbook,
            parseDayFirst: parseDayFirst, dmy: dmy, todayIso: todayIso, isIso: isIso, key: key };
 });

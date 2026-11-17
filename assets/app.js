@@ -16,6 +16,7 @@
     asOn: NCL.todayIso(),
     tab: "60", view: "abstract",
     f: { sd: "", ps: "", cat: "", q: "" },
+    back: [],                          // where the Back button returns to
     preview: false, problem: ""
   };
   var published = { 60: null, 90: null };   // what is saved on the server now
@@ -66,13 +67,22 @@
     }
     if (silent !== true) render();
   }
-  function go(tab, view, filters) {
+  function go(tab, view, filters, isBack) {
+    if (!isBack && (tab !== state.tab || view !== state.view)) {
+      state.back.push({ tab: state.tab, view: state.view, f: Object.assign({}, state.f) });
+      if (state.back.length > 30) state.back.shift();
+    }
     state.tab = tab; state.view = view;
     state.f = Object.assign({ sd: "", ps: "", cat: "", q: "" }, filters || {});
     history.replaceState(null, "", "#" + tab + "/" + view);
     render();
     window.scrollTo(0, 0);
   }
+  function goBack() {
+    var p = state.back.pop() || { tab: state.tab, view: "abstract", f: {} };
+    go(p.tab, p.view, p.f, true);
+  }
+  function resetFilters() { state.f = { sd: "", ps: "", cat: "", q: "" }; render(); }
   function recompute() {
     state.rep = {};
     [60, 90].forEach(function (L) {
@@ -108,7 +118,7 @@
     $("subtabs").querySelectorAll("button").forEach(function (b) {
       b.addEventListener("click", function () { go(state.tab, b.dataset.view); });
     });
-    setPrintPage(state.view === "all" ? "landscape" : "portrait");
+    setPrintPage("landscape");
     renderFilters(R);
     if (state.view === "abstract") renderAbstract(R); else renderList(R);
   }
@@ -148,7 +158,7 @@
   function renderFilters(R) {
     var box = $("filters");
     if (state.view === "abstract") { box.innerHTML = ""; return; }
-    var f = state.f, h = "";
+    var f = state.f, h = '<button class="btn back" id="backBtn" type="button">← Back</button>';
     h += '<label>Sub-division<select id="fSd"><option value="">All</option>' + cfg.subDivisions.map(function (g) {
       return '<option value="' + g.code + '"' + (f.sd === g.code ? " selected" : "") + ">" + g.code + "</option>";
     }).join("") + "</select></label>";
@@ -158,12 +168,15 @@
       return '<option' + (f.ps === s ? " selected" : "") + ">" + esc(s) + "</option>";
     }).join("") + "</select></label>";
     if (state.view === "all") {
-      h += '<label>Remarks<select id="fCat"><option value="">All</option>' + NCL.categoryList(R.labels).map(function (c) {
+      h += '<label>Remarks<select id="fCat"><option value="">All</option>' + NCL.criteriaList(R.labels).map(function (c) {
         return '<option' + (f.cat === c ? " selected" : "") + ">" + esc(c) + "</option>";
       }).join("") + "</select></label>";
     }
     h += '<label>Search<input id="fQ" type="search" placeholder="FIR no / section" value="' + esc(f.q) + '"></label>';
+    h += '<button class="btn" id="resetBtn" type="button">Reset</button>';
     box.innerHTML = h;
+    $("backBtn").onclick = goBack;
+    $("resetBtn").onclick = resetFilters;
     $("fSd").onchange = function () { f.sd = this.value; f.ps = ""; render(); };
     $("fPs").onchange = function () { f.ps = this.value; render(); };
     if ($("fCat")) $("fCat").onchange = function () { f.cat = this.value; render(); };
@@ -177,10 +190,11 @@
   function currentRows(R) {
     var f = state.f, src = state.view === "all" ? R.records : R.lists[state.view];
     var q = f.q.trim().toUpperCase(), ps = NCL.key(f.ps);
+    var cats = f.cat ? (NCL.criteriaGroups(R.labels)[f.cat] || [f.cat]) : null;
     return src.filter(function (o) {
       if (f.sd && o.sd !== f.sd) return false;
       if (ps && NCL.key(o.ps) !== ps) return false;
-      if (f.cat && o.remark !== f.cat) return false;
+      if (cats && cats.indexOf(o.remark) < 0) return false;
       if (q && (o.fir + " " + o.acts + " " + o.ps).toUpperCase().indexOf(q) < 0) return false;
       return true;
     });
@@ -194,7 +208,7 @@
 
   function renderList(R) {
     var rows = currentRows(R), d = R.defs[state.view], all = state.view === "all", h = [];
-    var title = all ? "NEW CRIMINAL LAWS - " + R.limit + " DAYS CASES - ALL CASES AS ON " + NCL.dmy(R.asOn) : d.title + NCL.dmy(R.asOn);
+    var title = all ? NCL.allTitle(R) : d.title + NCL.dmy(R.asOn);
     h.push('<div class="sheet"><h2>' + esc(title) + "</h2>");
     h.push('<p class="count-line no-print">' + rows.length + " case(s)" + (filtered() ? " match the filters" : "") + "</p>");
     if (!rows.length) { h.push('<div class="empty">No cases.</div></div>'); $("view").innerHTML = h.join(""); return; }
@@ -219,7 +233,9 @@
   }
 
   function renderAbstract(R) {
-    var ab = R.abstract, L = R.labels, h = [], kinds = ["", "", "", "lt", "bet", "gt"];
+    var ab = R.abstract, h = [];
+    var kinds = ["sum", "", "", "", "sum", "lt", "bet", "gt"];           // one per abstract column
+    var cls = function (j) { return "num" + (kinds[j] === "sum" ? " sumc" : kinds[j] === "gt" ? " gtc" : ""); };
     var cnt = function (v, f) {
       return v ? '<button type="button" class="cnt" data-f="' + esc(JSON.stringify(f)) + '">' + v + "</button>" : "0";
     };
@@ -229,22 +245,24 @@
         '"><div class="k">' + esc(c) + '</div><div class="v">' + ab.grand[j] + "</div></button>");
     });
     h.push("</div>");
-    h.push('<div class="sheet"><h2>' + esc(ab.title) + "</h2><table><thead><tr><th>S.NO</th><th>POLICE STATION</th>");
-    ab.columns.forEach(function (c) { h.push("<th>" + esc(c).replace(/_/g, "_<wbr>") + "</th>"); });
+    h.push('<div class="sheet"><h2>' + esc(ab.title) + '</h2><table class="abs"><thead><tr><th>S.NO</th><th>POLICE STATION</th>');
+    ab.columns.forEach(function (c, j) {
+      h.push('<th class="' + (kinds[j] === "gt" ? "gth" : kinds[j] === "sum" ? "sumh" : "") + '">' + esc(c).replace(/_/g, "_<wbr>") + "</th>");
+    });
     h.push("<th>Grand Total</th></tr></thead><tbody>");
     ab.groups.forEach(function (g) {
-      h.push('<tr class="section"><td colspan="9">' + esc(g.title) + "</td></tr>");
+      h.push('<tr class="section"><td colspan="11">' + esc(g.title) + "</td></tr>");
       g.rows.forEach(function (x) {
         h.push('<tr><td class="num">' + x.sno + "</td><td>" + esc(x.ps) + "</td>");
-        x.counts.forEach(function (v, j) { h.push('<td class="num">' + cnt(v, { ps: x.ps, cat: ab.columns[j] }) + "</td>"); });
+        x.counts.forEach(function (v, j) { h.push('<td class="' + cls(j) + '">' + cnt(v, { ps: x.ps, cat: ab.columns[j] }) + "</td>"); });
         h.push('<td class="num">' + cnt(x.total, { ps: x.ps }) + "</td></tr>");
       });
       h.push('<tr class="total"><td colspan="2" class="c">' + esc(g.totalLabel) + "</td>");
-      g.counts.forEach(function (v, j) { h.push('<td class="num">' + cnt(v, { sd: g.code, cat: ab.columns[j] }) + "</td>"); });
+      g.counts.forEach(function (v, j) { h.push('<td class="' + cls(j) + '">' + cnt(v, { sd: g.code, cat: ab.columns[j] }) + "</td>"); });
       h.push('<td class="num">' + cnt(g.total, { sd: g.code }) + "</td></tr>");
     });
     h.push('<tr class="grand"><td></td><td>Grand Total</td>');
-    ab.grand.forEach(function (v, j) { h.push('<td class="num">' + cnt(v, { cat: ab.columns[j] }) + "</td>"); });
+    ab.grand.forEach(function (v, j) { h.push('<td class="' + cls(j) + '">' + cnt(v, { cat: ab.columns[j] }) + "</td>"); });
     h.push('<td class="num">' + ab.grandTotal + "</td></tr></tbody></table></div>");
     $("view").innerHTML = h.join("");
     $("view").querySelectorAll("[data-f]").forEach(function (b) {
@@ -284,7 +302,7 @@
       return loadExcelJS().then(function (X) {
         var w = { limit: state.tab, key: state.view };
         if (state.view !== "abstract" && filtered()) w.records = currentRows(R);
-        return save(NCL.buildWorkbook(X, state.rep, [w]), safeName(R.defs[state.view].sheet) + "_" + NCL.dmy(R.asOn) + ".xlsx");
+        return save(NCL.buildWorkbook(X, state.rep, [w], cfg.credit), safeName(R.defs[state.view].sheet) + "_" + NCL.dmy(R.asOn) + ".xlsx");
       });
     });
   }
@@ -293,7 +311,7 @@
       return loadExcelJS().then(function (X) {
         var which = [];
         [60, 90].forEach(function (L) { VIEWS.forEach(function (v) { which.push({ limit: L, key: v }); }); });
-        return save(NCL.buildWorkbook(X, state.rep, which), "NCL_60_AND_90_DAYS_REPORTS_" + NCL.dmy(state.asOn) + ".xlsx");
+        return save(NCL.buildWorkbook(X, state.rep, which, cfg.credit), "NCL_60_AND_90_DAYS_REPORTS_" + NCL.dmy(state.asOn) + ".xlsx");
       });
     });
   }
