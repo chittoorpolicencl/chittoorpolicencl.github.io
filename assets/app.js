@@ -1,0 +1,453 @@
+/* Page code: loading data, showing reports, export, admin upload. */
+(function () {
+  "use strict";
+  var cfg = window.NCL_CONFIG, NCL = window.NCL;
+  var $ = function (id) { return document.getElementById(id); };
+  var esc = function (s) {
+    return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
+      return { "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c];
+    });
+  };
+  var DATA_PATH = { 60: "data/ncl60.json", 90: "data/ncl90.json" };
+  var VIEWS = ["abstract", "lt", "bet", "gt", "all"];
+
+  var state = {
+    data: { 60: null, 90: null },      // published (or previewed) data files
+    rep: {},                           // computed reports
+    asOn: NCL.todayIso(),
+    tab: "60", view: "abstract",
+    f: { sd: "", ps: "", cat: "", q: "" },
+    preview: false
+  };
+
+  /* ---------------- start ---------------- */
+  $("unitName").textContent = cfg.unitName;
+  $("appTitle").textContent = cfg.appTitle;
+  $("credit").textContent = cfg.credit;
+  $("asOn").value = state.asOn;
+  $("asOn").addEventListener("change", function () {
+    state.asOn = this.value || NCL.todayIso(); this.value = state.asOn; recompute(); render();
+  });
+  document.querySelectorAll(".seg button").forEach(function (b) {
+    b.addEventListener("click", function () { go(b.dataset.tab, state.view); });
+  });
+  $("printBtn").addEventListener("click", function () { window.print(); });
+  $("xlBtn").addEventListener("click", function () { exportCurrent(); });
+  $("xlAllBtn").addEventListener("click", function () { exportAll(); });
+  $("adminBtn").addEventListener("click", openAdmin);
+  window.addEventListener("hashchange", readHash);
+
+  readHash(true);
+  Promise.all([60, 90].map(function (L) {
+    return fetch(DATA_PATH[L] + "?t=" + Date.now(), { cache: "no-store" })
+      .then(function (r) { return r.ok ? r.json() : null; })
+      .catch(function () { return null; })
+      .then(function (j) { state.data[L] = j && Array.isArray(j.rows) ? j : null; });
+  })).then(function () { recompute(); render(); });
+
+  function readHash(silent) {
+    var m = /^#(60|90)\/(\w+)$/.exec(location.hash);
+    if (m && VIEWS.indexOf(m[2]) >= 0 && (m[1] !== state.tab || m[2] !== state.view)) {
+      state.tab = m[1]; state.view = m[2]; state.f = { sd: "", ps: "", cat: "", q: "" };
+    }
+    if (silent !== true) render();
+  }
+  function go(tab, view, filters) {
+    state.tab = tab; state.view = view;
+    state.f = Object.assign({ sd: "", ps: "", cat: "", q: "" }, filters || {});
+    history.replaceState(null, "", "#" + tab + "/" + view);
+    render();
+    window.scrollTo(0, 0);
+  }
+  function recompute() {
+    state.rep = {};
+    [60, 90].forEach(function (L) {
+      if (state.data[L]) state.rep[L] = NCL.build(state.data[L].rows, L, state.asOn, cfg);
+    });
+  }
+
+  /* ---------------- rendering ---------------- */
+  function render() {
+    var R = state.rep[state.tab], has = !!(state.rep[60] || state.rep[90]);
+    $("nav").hidden = !has; $("bar").hidden = !R;
+    document.querySelectorAll(".seg button").forEach(function (b) {
+      b.setAttribute("aria-selected", b.dataset.tab === state.tab ? "true" : "false");
+    });
+    renderNotice(R);
+    renderMeta();
+    if (!has) {
+      $("view").innerHTML = '<div class="sheet"><div class="empty"><b>No data has been uploaded yet.</b><br>' +
+        'Use <b>Admin</b> (top right) to sign in and upload the 60 DAYS and 90 DAYS Excel files.</div></div>';
+      return;
+    }
+    if (!R) {
+      $("subtabs").innerHTML = "";
+      $("view").innerHTML = '<div class="sheet"><div class="empty">The ' + state.tab +
+        ' DAYS file has not been uploaded yet.</div></div>';
+      return;
+    }
+    var d = R.defs;
+    $("subtabs").innerHTML = VIEWS.map(function (v) {
+      var n = v === "abstract" ? "" : '<span class="n">' + (v === "all" ? R.records.length : R.lists[v].length) + "</span>";
+      return '<button type="button" data-view="' + v + '" aria-selected="' + (v === state.view) + '">' + esc(d[v].label) + n + "</button>";
+    }).join("");
+    $("subtabs").querySelectorAll("button").forEach(function (b) {
+      b.addEventListener("click", function () { go(state.tab, b.dataset.view); });
+    });
+    setPrintPage(state.view === "all" ? "landscape" : "portrait");
+    renderFilters(R);
+    if (state.view === "abstract") renderAbstract(R); else renderList(R);
+  }
+
+  function renderNotice(R) {
+    var parts = [];
+    if (state.preview) parts.push("<b>Preview only.</b> These files are loaded on this device and are not published yet. Open Admin and press Publish.");
+    if (state.asOn !== NCL.todayIso()) parts.push("Days are calculated as on <b>" + NCL.dmy(state.asOn) + "</b>, not today.");
+    if (R) {
+      var u = Object.keys(R.abstract.unmatched);
+      if (u.length) parts.push("<b>Not in the abstract:</b> " + u.map(function (s) {
+        return esc(s) + " (" + R.abstract.unmatched[s] + ")";
+      }).join(", ") + " — these stations are not in the sub-division list (assets/config.js).");
+      if (R.abstract.unclassified) parts.push(R.abstract.unclassified + " case(s) have a missing or unreadable date and are not counted.");
+    }
+    $("notice").hidden = !parts.length;
+    $("notice").innerHTML = parts.join("<br>");
+  }
+
+  function renderMeta() {
+    var bits = [60, 90].map(function (L) {
+      var m = state.data[L] && state.data[L].meta;
+      if (!m) return null;
+      var t = m.uploadedAt ? new Date(m.uploadedAt) : null;
+      return L + " DAYS: " + esc(m.file || "file") + ", " + state.data[L].rows.length + " cases" +
+        (t && !isNaN(t) ? ", uploaded " + t.toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" }) : "");
+    }).filter(Boolean);
+    $("meta").innerHTML = bits.join(" &nbsp;•&nbsp; ");
+  }
+
+  function setPrintPage(orient) {
+    var s = $("printPage") || document.head.appendChild(Object.assign(document.createElement("style"), { id: "printPage" }));
+    s.textContent = "@page{size:legal " + orient + ";margin:1.4cm}";
+  }
+
+  function renderFilters(R) {
+    var box = $("filters");
+    if (state.view === "abstract") { box.innerHTML = ""; return; }
+    var f = state.f, h = "";
+    h += '<label>Sub-division<select id="fSd"><option value="">All</option>' + cfg.subDivisions.map(function (g) {
+      return '<option value="' + g.code + '"' + (f.sd === g.code ? " selected" : "") + ">" + g.code + "</option>";
+    }).join("") + "</select></label>";
+    var stations = [];
+    cfg.subDivisions.forEach(function (g) { if (!f.sd || f.sd === g.code) stations = stations.concat(g.stations); });
+    h += '<label>Police station<select id="fPs"><option value="">All</option>' + stations.map(function (s) {
+      return '<option' + (f.ps === s ? " selected" : "") + ">" + esc(s) + "</option>";
+    }).join("") + "</select></label>";
+    if (state.view === "all") {
+      h += '<label>Remarks<select id="fCat"><option value="">All</option>' + NCL.categoryList(R.labels).map(function (c) {
+        return '<option' + (f.cat === c ? " selected" : "") + ">" + esc(c) + "</option>";
+      }).join("") + "</select></label>";
+    }
+    h += '<label>Search<input id="fQ" type="search" placeholder="FIR no / section" value="' + esc(f.q) + '"></label>';
+    box.innerHTML = h;
+    $("fSd").onchange = function () { f.sd = this.value; f.ps = ""; render(); };
+    $("fPs").onchange = function () { f.ps = this.value; render(); };
+    if ($("fCat")) $("fCat").onchange = function () { f.cat = this.value; render(); };
+    var timer;
+    $("fQ").oninput = function () {
+      var v = this.value; clearTimeout(timer);
+      timer = setTimeout(function () { f.q = v; renderList(state.rep[state.tab]); }, 200);
+    };
+  }
+
+  function currentRows(R) {
+    var f = state.f, src = state.view === "all" ? R.records : R.lists[state.view];
+    var q = f.q.trim().toUpperCase(), ps = NCL.key(f.ps);
+    return src.filter(function (o) {
+      if (f.sd && o.sd !== f.sd) return false;
+      if (ps && NCL.key(o.ps) !== ps) return false;
+      if (f.cat && o.remark !== f.cat) return false;
+      if (q && (o.fir + " " + o.acts + " " + o.ps).toUpperCase().indexOf(q) < 0) return false;
+      return true;
+    });
+  }
+  function filtered() { var f = state.f; return !!(f.sd || f.ps || f.cat || f.q.trim()); }
+
+  function tagClass(R, remark) {
+    var L = R.labels;
+    return remark === L.gt ? "gt" : remark === L.bet ? "bet" : remark === L.lt ? "lt" : "";
+  }
+
+  function renderList(R) {
+    var rows = currentRows(R), d = R.defs[state.view], all = state.view === "all", h = [];
+    var title = all ? "NEW CRIMINAL LAWS - " + R.limit + " DAYS CASES - ALL CASES AS ON " + NCL.dmy(R.asOn) : d.title + NCL.dmy(R.asOn);
+    h.push('<div class="sheet"><h2>' + esc(title) + "</h2>");
+    h.push('<p class="count-line no-print">' + rows.length + " case(s)" + (filtered() ? " match the filters" : "") + "</p>");
+    if (!rows.length) { h.push('<div class="empty">No cases.</div></div>'); $("view").innerHTML = h.join(""); return; }
+    h.push("<table><thead><tr><th>S.NO</th><th>POLICE STATION</th><th>FIR NO</th><th>FIR DT</th><th>ACTS &amp; SEC</th>");
+    h.push(all ? "<th>Stage Of The Case</th><th>CHARGESHEET DATE</th><th>Case Stage</th><th>Days Duration</th><th>Remarks</th><th>SUB_DIV</th>"
+               : "<th>Days Duration</th><th>SUB_DIV</th>");
+    h.push("</tr></thead><tbody>");
+    rows.forEach(function (o, i) {
+      h.push('<tr><td class="num">' + (i + 1) + "</td><td>" + esc(o.ps) + '</td><td class="nw">' + esc(o.fir) +
+        '</td><td class="c nw">' + NCL.dmy(o.fd) + '</td><td class="acts">' + esc(o.acts) + "</td>");
+      if (all) {
+        h.push("<td>" + esc(o.stage) + '</td><td class="c">' + esc(NCL.dmy(o.cd)) + '</td><td class="c">' + o.caseStage +
+          '</td><td class="num">' + (o.days === null ? "" : o.days) + '</td><td><span class="tag ' + tagClass(R, o.remark) + '">' +
+          esc(o.remark) + '</span></td><td class="c">' + esc(o.sd) + "</td>");
+      } else {
+        h.push('<td class="num">' + o.days + '</td><td class="c">' + esc(o.sd) + "</td>");
+      }
+      h.push("</tr>");
+    });
+    h.push("</tbody></table></div>");
+    $("view").innerHTML = h.join("");
+  }
+
+  function renderAbstract(R) {
+    var ab = R.abstract, L = R.labels, h = [], kinds = ["", "", "", "lt", "bet", "gt"];
+    var cnt = function (v, f) {
+      return v ? '<button type="button" class="cnt" data-f="' + esc(JSON.stringify(f)) + '">' + v + "</button>" : "0";
+    };
+    h.push('<div class="tiles">');
+    ab.columns.forEach(function (c, j) {
+      h.push('<button type="button" class="tile ' + kinds[j] + '" data-f="' + esc(JSON.stringify({ cat: c })) +
+        '"><div class="k">' + esc(c) + '</div><div class="v">' + ab.grand[j] + "</div></button>");
+    });
+    h.push("</div>");
+    h.push('<div class="sheet"><h2>' + esc(ab.title) + "</h2><table><thead><tr><th>S.NO</th><th>POLICE STATION</th>");
+    ab.columns.forEach(function (c) { h.push("<th>" + esc(c).replace(/_/g, "_<wbr>") + "</th>"); });
+    h.push("<th>Grand Total</th></tr></thead><tbody>");
+    ab.groups.forEach(function (g) {
+      h.push('<tr class="section"><td colspan="9">' + esc(g.title) + "</td></tr>");
+      g.rows.forEach(function (x) {
+        h.push('<tr><td class="num">' + x.sno + "</td><td>" + esc(x.ps) + "</td>");
+        x.counts.forEach(function (v, j) { h.push('<td class="num">' + cnt(v, { ps: x.ps, cat: ab.columns[j] }) + "</td>"); });
+        h.push('<td class="num">' + cnt(x.total, { ps: x.ps }) + "</td></tr>");
+      });
+      h.push('<tr class="total"><td colspan="2" class="c">' + esc(g.totalLabel) + "</td>");
+      g.counts.forEach(function (v, j) { h.push('<td class="num">' + cnt(v, { sd: g.code, cat: ab.columns[j] }) + "</td>"); });
+      h.push('<td class="num">' + cnt(g.total, { sd: g.code }) + "</td></tr>");
+    });
+    h.push('<tr class="grand"><td></td><td>Grand Total</td>');
+    ab.grand.forEach(function (v, j) { h.push('<td class="num">' + cnt(v, { cat: ab.columns[j] }) + "</td>"); });
+    h.push('<td class="num">' + ab.grandTotal + "</td></tr></tbody></table></div>");
+    $("view").innerHTML = h.join("");
+    $("view").querySelectorAll("[data-f]").forEach(function (b) {
+      b.addEventListener("click", function () { go(state.tab, "all", JSON.parse(b.dataset.f)); });
+    });
+  }
+
+  /* ---------------- Excel export ---------------- */
+  var excelLoading;
+  function loadExcelJS() {
+    if (window.ExcelJS) return Promise.resolve(window.ExcelJS);
+    if (!excelLoading) excelLoading = new Promise(function (ok, fail) {
+      var s = document.createElement("script");
+      s.src = "vendor/exceljs.min.js";
+      s.onload = function () { ok(window.ExcelJS); };
+      s.onerror = function () { excelLoading = null; fail(new Error("Could not load the Excel export library.")); };
+      document.head.appendChild(s);
+    });
+    return excelLoading;
+  }
+  function safeName(s) { return s.replace(/[<>:"\/\\|?*]/g, "_").trim(); }
+  function save(wb, name) {
+    return wb.xlsx.writeBuffer().then(function (buf) {
+      var a = document.createElement("a");
+      a.href = URL.createObjectURL(new Blob([buf], { type: "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet" }));
+      a.download = name; document.body.appendChild(a); a.click(); a.remove();
+      setTimeout(function () { URL.revokeObjectURL(a.href); }, 5000);
+    });
+  }
+  function busy(btn, fn) {
+    var t = btn.textContent; btn.disabled = true; btn.textContent = "Preparing…";
+    return fn().catch(function (e) { alert(e.message || e); }).then(function () { btn.disabled = false; btn.textContent = t; });
+  }
+  function exportCurrent() {
+    var R = state.rep[state.tab]; if (!R) return;
+    busy($("xlBtn"), function () {
+      return loadExcelJS().then(function (X) {
+        var w = { limit: state.tab, key: state.view };
+        if (state.view !== "abstract" && filtered()) w.records = currentRows(R);
+        return save(NCL.buildWorkbook(X, state.rep, [w]), safeName(R.defs[state.view].sheet) + "_" + NCL.dmy(R.asOn) + ".xlsx");
+      });
+    });
+  }
+  function exportAll() {
+    busy($("xlAllBtn"), function () {
+      return loadExcelJS().then(function (X) {
+        var which = [];
+        [60, 90].forEach(function (L) { VIEWS.forEach(function (v) { which.push({ limit: L, key: v }); }); });
+        return save(NCL.buildWorkbook(X, state.rep, which), "NCL_60_AND_90_DAYS_REPORTS_" + NCL.dmy(state.asOn) + ".xlsx");
+      });
+    });
+  }
+
+  /* ---------------- admin: GitHub sign-in and upload ---------------- */
+  var API = "https://api.github.com";
+  var KEY = "ncl-admin";
+  var pending = { 60: null, 90: null };       // parsed files waiting to be published
+
+  function detectRepo() {
+    var g = cfg.github || {}, owner = g.owner || "", repo = g.repo || "", h = location.hostname;
+    if (/\.github\.io$/i.test(h)) {
+      if (!owner) owner = h.split(".")[0];
+      if (!repo) {
+        var seg = location.pathname.split("/").filter(Boolean)[0];
+        repo = seg && !/\.html?$/i.test(seg) ? seg : h;
+      }
+    }
+    return { owner: owner, repo: repo };
+  }
+  function session() {
+    try { return JSON.parse(sessionStorage.getItem(KEY) || localStorage.getItem(KEY) || "null"); } catch (e) { return null; }
+  }
+  function setSession(s, remember) {
+    try {
+      sessionStorage.removeItem(KEY); localStorage.removeItem(KEY);
+      if (s) (remember ? localStorage : sessionStorage).setItem(KEY, JSON.stringify(s));
+    } catch (e) { /* storage unavailable: stay signed in for this page only */ }
+    memSession = s;
+  }
+  var memSession = session();
+
+  function gh(s, method, path, body) {
+    return fetch(API + "/repos/" + s.owner + "/" + s.repo + path, {
+      method: method,
+      headers: { "Authorization": "Bearer " + s.token, "Accept": "application/vnd.github+json", "X-GitHub-Api-Version": "2022-11-28" },
+      body: body ? JSON.stringify(body) : undefined
+    }).then(function (r) {
+      return r.json().catch(function () { return {}; }).then(function (j) {
+        if (!r.ok) {
+          var e = new Error(r.status === 401 ? "The access token was not accepted (wrong or expired)."
+            : r.status === 404 ? "Repository not found, or the token has no access to it."
+            : r.status === 403 ? "The token is not allowed to do this. It needs Contents: Read and write on this repository."
+            : (j.message || "GitHub error " + r.status));
+          e.status = r.status; throw e;
+        }
+        return j;
+      });
+    });
+  }
+
+  function openAdmin() { drawAdmin(); $("adminDlg").showModal(); }
+
+  function drawAdmin(msg) {
+    var s = memSession, body = $("adminBody");
+    if (!s) {
+      var d = detectRepo();
+      body.innerHTML =
+        '<p class="help" style="margin-top:0">Sign in with a GitHub access token for the repository that hosts this site. ' +
+        "Only someone who can write to that repository can upload data.</p>" +
+        '<div class="row"><div><label for="aOwner">GitHub user / organisation</label><input type="text" id="aOwner" value="' + esc(d.owner) + '"></div>' +
+        '<div><label for="aRepo">Repository</label><input type="text" id="aRepo" value="' + esc(d.repo) + '"></div></div>' +
+        '<label for="aTok">Access token</label><input type="password" id="aTok" autocomplete="off" placeholder="github_pat_…">' +
+        '<label class="chk"><input type="checkbox" id="aRem"> Keep me signed in on this device</label>' +
+        '<p class="help">Create the token at GitHub → Settings → Developer settings → Fine-grained tokens, ' +
+        "limited to this repository, with <b>Contents: Read and write</b>. Steps are in README.md.</p>" +
+        '<div id="aMsg"></div><div class="actions"><button class="btn primary" id="aIn" type="button">Sign in</button></div>';
+      $("aIn").onclick = signIn;
+      $("aTok").onkeydown = function (e) { if (e.key === "Enter") signIn(); };
+      return;
+    }
+    body.innerHTML =
+      '<p class="help" style="margin-top:0">Signed in to <b>' + esc(s.owner + "/" + s.repo) + "</b>" + (s.login ? " as <b>" + esc(s.login) + "</b>" : "") +
+      '. <button class="btn" id="aOut" type="button" style="padding:2px 8px;margin-left:6px">Sign out</button></p>' +
+      [60, 90].map(function (L) {
+        return '<div class="file"><b>' + L + ' DAYS Excel file</b><input type="file" id="aF' + L + '" accept=".xlsx,.xls,.xlsm,.csv">' +
+          '<div class="sum" id="aS' + L + '">' + summary(L) + "</div></div>";
+      }).join("") +
+      '<p class="help">Choose one or both files (columns A:H: S.NO, DISTRICT, POLICE STATION, FIR NO, FIR DT, ACTS &amp; SEC, ' +
+      "Stage Of The Case, CHARGESHEET DATE). The reports behind this window show a preview; nothing is saved until you press Publish.</p>" +
+      '<div id="aMsg">' + (msg || "") + '</div><div class="actions"><button class="btn primary" id="aPub" type="button"' +
+      (pending[60] || pending[90] ? "" : " disabled") + ">Publish</button></div>";
+    $("aOut").onclick = function () { setSession(null); drawAdmin(); };
+    [60, 90].forEach(function (L) { $("aF" + L).onchange = function () { pick(L, this.files[0]); }; });
+    $("aPub").onclick = publish;
+  }
+
+  function summary(L) {
+    var p = pending[L];
+    if (!p) {
+      var m = state.data[L] && !state.preview && state.data[L].meta;
+      return m ? "Published now: " + esc(m.file || "") + " (" + state.data[L].rows.length + " cases)" : "Nothing published yet.";
+    }
+    var t = "Ready: " + esc(p.meta.file) + " — " + p.meta.read + " rows read, " + p.rows.length + " cases kept";
+    if (p.meta.removed) t += ", " + p.meta.removed + " removed (excluded stations)";
+    if (p.meta.badFirDate) t += ", " + p.meta.badFirDate + " with unreadable FIR date";
+    return t + ".";
+  }
+  function note(kind, text) { $("aMsg").innerHTML = text ? '<div class="msg ' + kind + '">' + text + "</div>" : ""; }
+
+  function signIn() {
+    var s = { owner: $("aOwner").value.trim(), repo: $("aRepo").value.trim(), token: $("aTok").value.trim() };
+    if (!s.owner || !s.repo || !s.token) { note("err", "Enter the user, repository and access token."); return; }
+    var remember = $("aRem").checked;
+    note("wait", "Checking…"); $("aIn").disabled = true;
+    gh(s, "GET", "").then(function (repo) {
+      if (!repo.permissions || !repo.permissions.push) throw new Error("This token can read the repository but cannot write to it.");
+      s.branch = (cfg.github && cfg.github.branch) || repo.default_branch;
+      return fetch(API + "/user", { headers: { "Authorization": "Bearer " + s.token } })
+        .then(function (r) { return r.ok ? r.json() : {}; }).catch(function () { return {}; })
+        .then(function (u) { s.login = u.login || ""; setSession(s, remember); drawAdmin(); });
+    }).catch(function (e) {
+      note("err", esc(e.message === "Failed to fetch" ? "Could not reach GitHub. Check the internet connection." : e.message));
+      if ($("aIn")) $("aIn").disabled = false;
+    });
+  }
+
+  function pick(L, file) {
+    if (!file) return;
+    note("wait", "Reading " + esc(file.name) + "…");
+    file.arrayBuffer().then(function (buf) {
+      var wb = XLSX.read(new Uint8Array(buf), { type: "array" });
+      var aoa = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: true, defval: "" });
+      var imp = NCL.importRows(aoa, cfg);
+      if (!imp.rows.length) throw new Error("No case rows were found in this file.");
+      pending[L] = { meta: { file: file.name, uploadedAt: new Date().toISOString(), read: imp.read,
+                             removed: imp.removed, badFirDate: imp.badFirDate }, rows: imp.rows };
+      state.data[L] = pending[L]; state.preview = true; state.tab = String(L);
+      recompute(); render(); drawAdmin();
+      var u = Object.keys(state.rep[L].abstract.unmatched);
+      if (u.length) note("err", "Stations not in the sub-division list (left out of the abstract): " + esc(u.join(", ")));
+    }).catch(function (e) { $("aF" + L).value = ""; note("err", esc(e.message || String(e))); });
+  }
+
+  function publish() {
+    var s = memSession, items = [60, 90].filter(function (L) { return pending[L]; });
+    if (!s || !items.length) return;
+    var folder = ((cfg.github && cfg.github.folder) || "").replace(/^\/+|\/+$/g, "");
+    $("aPub").disabled = true; note("wait", "Publishing to GitHub…");
+    var head, blobs;
+    gh(s, "GET", "/git/ref/heads/" + encodeURIComponent(s.branch)).then(function (ref) {
+      head = ref.object.sha;
+      return Promise.all(items.map(function (L) {
+        return gh(s, "POST", "/git/blobs", { content: JSON.stringify(pending[L]), encoding: "utf-8" });
+      }));
+    }).then(function (b) {
+      blobs = b;
+      return gh(s, "GET", "/git/commits/" + head);
+    }).then(function (commit) {
+      return gh(s, "POST", "/git/trees", {
+        base_tree: commit.tree.sha,
+        tree: items.map(function (L, i) {
+          return { path: (folder ? folder + "/" : "") + DATA_PATH[L], mode: "100644", type: "blob", sha: blobs[i].sha };
+        })
+      });
+    }).then(function (tree) {
+      return gh(s, "POST", "/git/commits", {
+        message: "Update NCL data: " + items.map(function (L) { return L + " DAYS"; }).join(" and ") + " (" + NCL.dmy(NCL.todayIso()) + ")",
+        tree: tree.sha, parents: [head]
+      });
+    }).then(function (c) {
+      return gh(s, "PATCH", "/git/refs/heads/" + encodeURIComponent(s.branch), { sha: c.sha });
+    }).then(function () {
+      pending = { 60: null, 90: null }; state.preview = false; render();
+      drawAdmin('<div class="msg ok">Published. Everyone will see the new reports after GitHub finishes updating the site (about a minute).</div>');
+    }).catch(function (e) {
+      if (e.status === 401) { setSession(null); drawAdmin(); note("err", "Your sign-in has expired. Sign in again and publish."); return; }
+      note("err", "Not published. " + esc(e.message === "Failed to fetch" ? "Could not reach GitHub." : e.message));
+      $("aPub").disabled = false;
+    });
+  }
+})();
