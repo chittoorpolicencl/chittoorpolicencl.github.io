@@ -61,7 +61,7 @@ td.gtc,td.gtc .cnt{color:var(--red);font-weight:700}
 thead th.gth{background:#f8d7d4;color:var(--red)}
 thead th.sumh{background:#f0e2b0}
 tr.total td.sumc,tr.grand td.sumc{background:inherit}
-table.abs th{font-size:11.5px}
+table.abs th{font-size:12px;line-height:1.25}
 .btn.back{font-weight:600}
 td .cnt{border:0;background:none;padding:0 4px;cursor:pointer;color:var(--accent);text-decoration:underline;font-weight:inherit;font-variant-numeric:tabular-nums}
 .tag{white-space:nowrap;font-size:12.5px}
@@ -103,6 +103,11 @@ dialog::backdrop{background:rgba(15,25,45,.5)}
   thead th{position:static}
   thead{display:table-header-group}
   tr{break-inside:avoid}
+  tr.pagebreak{break-after:page}
+  table.abs{font-size:12.5px}
+  table.abs th{font-size:11.5px}
+  table.abs td{padding:4px 6px}
+  .sheet h2{font-size:14px;margin:0 0 8px}
   td .cnt{color:inherit;text-decoration:none}
   td.gtc,td.gtc .cnt{color:#c00000!important}
   *{-webkit-print-color-adjust:exact;print-color-adjust:exact}

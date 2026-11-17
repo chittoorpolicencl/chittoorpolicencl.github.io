@@ -247,9 +247,10 @@
     h.push("</div>");
     h.push('<div class="sheet"><h2>' + esc(ab.title) + '</h2><table class="abs"><thead><tr><th>S.NO</th><th>POLICE STATION</th>');
     ab.columns.forEach(function (c, j) {
-      h.push('<th class="' + (kinds[j] === "gt" ? "gth" : kinds[j] === "sum" ? "sumh" : "") + '">' + esc(c).replace(/_/g, "_<wbr>") + "</th>");
+      h.push('<th class="' + (kinds[j] === "gt" ? "gth" : kinds[j] === "sum" ? "sumh" : "") + '">' + NCL.wrapLabel(c).map(esc).join("<br>") + "</th>");
     });
-    h.push("<th>Grand Total</th></tr></thead><tbody>");
+    h.push("<th>Grand<br>Total</th></tr></thead><tbody>");
+    var breakAfter = cfg.abstractPageBreakAfter || "KPM";
     ab.groups.forEach(function (g) {
       h.push('<tr class="section"><td colspan="11">' + esc(g.title) + "</td></tr>");
       g.rows.forEach(function (x) {
@@ -257,7 +258,7 @@
         x.counts.forEach(function (v, j) { h.push('<td class="' + cls(j) + '">' + cnt(v, { ps: x.ps, cat: ab.columns[j] }) + "</td>"); });
         h.push('<td class="num">' + cnt(x.total, { ps: x.ps }) + "</td></tr>");
       });
-      h.push('<tr class="total"><td colspan="2" class="c">' + esc(g.totalLabel) + "</td>");
+      h.push('<tr class="total' + (g.code === breakAfter ? " pagebreak" : "") + '"><td colspan="2" class="c">' + esc(g.totalLabel) + "</td>");
       g.counts.forEach(function (v, j) { h.push('<td class="' + cls(j) + '">' + cnt(v, { sd: g.code, cat: ab.columns[j] }) + "</td>"); });
       h.push('<td class="num">' + cnt(g.total, { sd: g.code }) + "</td></tr>");
     });
@@ -302,7 +303,7 @@
       return loadExcelJS().then(function (X) {
         var w = { limit: state.tab, key: state.view };
         if (state.view !== "abstract" && filtered()) w.records = currentRows(R);
-        return save(NCL.buildWorkbook(X, state.rep, [w], cfg.credit), safeName(R.defs[state.view].sheet) + "_" + NCL.dmy(R.asOn) + ".xlsx");
+        return save(NCL.buildWorkbook(X, state.rep, [w], cfg.credit, cfg.abstractPageBreakAfter), safeName(R.defs[state.view].sheet) + "_" + NCL.dmy(R.asOn) + ".xlsx");
       });
     });
   }
@@ -311,7 +312,7 @@
       return loadExcelJS().then(function (X) {
         var which = [];
         [60, 90].forEach(function (L) { VIEWS.forEach(function (v) { which.push({ limit: L, key: v }); }); });
-        return save(NCL.buildWorkbook(X, state.rep, which, cfg.credit), "NCL_60_AND_90_DAYS_REPORTS_" + NCL.dmy(state.asOn) + ".xlsx");
+        return save(NCL.buildWorkbook(X, state.rep, which, cfg.credit, cfg.abstractPageBreakAfter), "NCL_60_AND_90_DAYS_REPORTS_" + NCL.dmy(state.asOn) + ".xlsx");
       });
     });
   }

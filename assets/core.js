@@ -98,6 +98,19 @@
     return { rows: rows, read: aoa.length - 1, removed: removed, badFirDate: badFirDate, headerGuess: missing };
   }
 
+  /* "FR/CS_WITHIN_60_DAYS" -> ["FR/CS_WITHIN_", "60_DAYS"]; short labels stay on one line */
+  function wrapLabel(text) {
+    text = String(text);
+    if (text.length <= 12 || text.indexOf("_") < 0) return [text];
+    var best = -1, bestDiff = 1e9;
+    for (var i = 0; i < text.length; i++) {
+      if (text[i] !== "_") continue;
+      var d = Math.abs((i + 1) - (text.length - i - 1));
+      if (d < bestDiff) { bestDiff = d; best = i; }
+    }
+    return best < 0 ? [text] : [text.slice(0, best + 1), text.slice(best + 1)];
+  }
+
   function labels(limit) {
     var warn = limit - 15;
     return {
@@ -251,10 +264,12 @@
     }
   }
   function sheet(wb, name, widths, fitHeight, credit) {
+    var setup = fitHeight === "fixed"
+      ? { fitToPage: false, scale: 100 }
+      : { fitToPage: true, fitToWidth: 1, fitToHeight: fitHeight };
     var ws = wb.addWorksheet(name, {
-      pageSetup: { paperSize: 5, orientation: "landscape", fitToPage: true, fitToWidth: 1, fitToHeight: fitHeight,
-                   horizontalCentered: true,
-                   margins: { left: 0.4, right: 0.4, top: 0.5, bottom: 0.55, header: 0.2, footer: 0.25 } },
+      pageSetup: Object.assign({ paperSize: 5, orientation: "landscape", horizontalCentered: true,
+                   margins: { left: 0.4, right: 0.4, top: 0.45, bottom: 0.55, header: 0.2, footer: 0.25 } }, setup),
       headerFooter: { oddFooter: "&L&8" + String(credit || "").replace(/&/g, "&&") + "&R&8Page &P of &N" }
     });
     ws.columns = widths.map(function (w) { return { width: w }; });
@@ -303,21 +318,27 @@
     return ws;
   }
 
-  function addAbstractSheet(wb, name, ab, credit) {
-    var n = 11, SUM = [3, 7], RED = [10], al = ["center", "left"];
-    var ws = sheet(wb, name, [6, 30, 18, 24, 23, 19, 19, 14, 22, 14, 14], 1, credit);
+  /* Abstract: two Legal landscape pages, page 1 ends after the "page break" sub-division's total row */
+  function addAbstractSheet(wb, name, ab, credit, breakAfter) {
+    var n = 11, SUM = [3, 7], RED = [10], al = ["center", "left"], ROW = 19;
+    var ws = sheet(wb, name, [6, 31, 14, 14, 14, 13, 14, 12, 14, 12, 12], "fixed", credit);
     titleRow(ws, ab.title, n);
-    headRow(ws, ["S.NO", "POLICE STATION"].concat(ab.columns, ["Grand Total"]), 48, RED);
+    var head = ["S.NO", "POLICE STATION"].concat(ab.columns.map(function (c) { return wrapLabel(c).join("\n"); }), ["Grand\nTotal"]);
+    headRow(ws, head, 36, RED);
     ab.groups.forEach(function (g) {
       var r = ws.addRow([g.title]); ws.mergeCells(r.number, 1, r.number, n);
-      styleRow(r, n, { bold: true, size: 12, fill: C.section });
+      styleRow(r, n, { bold: true, size: 12, fill: C.section }); r.height = ROW;
       g.rows.forEach(function (x) {
-        styleRow(ws.addRow([x.sno, x.ps].concat(x.counts, [x.total])), n, { align: al, red: RED, shade: SUM });
+        var row = ws.addRow([x.sno, x.ps].concat(x.counts, [x.total]));
+        styleRow(row, n, { align: al, red: RED, shade: SUM, size: 12 }); row.height = ROW;
       });
       r = ws.addRow([g.totalLabel, null].concat(g.counts, [g.total])); ws.mergeCells(r.number, 1, r.number, 2);
-      styleRow(r, n, { bold: true, fill: C.total, red: RED });
+      styleRow(r, n, { bold: true, size: 12, fill: C.total, red: RED }); r.height = ROW;
+      if (g.code === breakAfter) r.addPageBreak();
     });
-    styleRow(ws.addRow([null, "Grand Total"].concat(ab.grand, [ab.grandTotal])), n, { bold: true, size: 12, fill: C.grand, red: RED, align: al });
+    var gr = ws.addRow([null, "Grand Total"].concat(ab.grand, [ab.grandTotal]));
+    styleRow(gr, n, { bold: true, size: 12, fill: C.grand, red: RED, align: al }); gr.height = ROW + 2;
+    ws.pageSetup.printTitlesRow = "1:2";
     ws.views = [{ state: "frozen", ySplit: 2 }];
     return ws;
   }
@@ -325,12 +346,12 @@
   function allTitle(R) { return "NEW CRIMINAL LAWS - " + R.limit + " DAYS CASES - ALL CASES AS ON " + dmy(R.asOn); }
 
   /* which: array of {limit, key}. rep: {60: build(...), 90: build(...)} */
-  function buildWorkbook(ExcelJS, rep, which, credit) {
+  function buildWorkbook(ExcelJS, rep, which, credit, breakAfter) {
     var wb = new ExcelJS.Workbook();
     which.forEach(function (w) {
       var R = rep[w.limit]; if (!R) return;
       var d = R.defs[w.key];
-      if (w.key === "abstract") addAbstractSheet(wb, d.sheet, R.abstract, credit);
+      if (w.key === "abstract") addAbstractSheet(wb, d.sheet, R.abstract, credit, breakAfter || "KPM");
       else if (w.key === "all") addAllSheet(wb, d.sheet, allTitle(R), w.records || R.records, R.labels, credit);
       else addListSheet(wb, d.sheet, d.title + dmy(R.asOn), w.records || R.lists[w.key], credit);
     });
@@ -338,6 +359,6 @@
   }
 
   return { importRows: importRows, compute: compute, abstract: abstract, build: build, labels: labels,
-           categoryList: categoryList, criteriaList: criteriaList, criteriaGroups: criteriaGroups, allTitle: allTitle, reportDefs: reportDefs, buildWorkbook: buildWorkbook,
+           categoryList: categoryList, criteriaList: criteriaList, wrapLabel: wrapLabel, criteriaGroups: criteriaGroups, allTitle: allTitle, reportDefs: reportDefs, buildWorkbook: buildWorkbook,
            parseDayFirst: parseDayFirst, dmy: dmy, todayIso: todayIso, isIso: isIso, key: key };
 });
