@@ -311,7 +311,8 @@
     busy($("xlAllBtn"), function () {
       return loadExcelJS().then(function (X) {
         var which = [];
-        [60, 90].forEach(function (L) { VIEWS.forEach(function (v) { which.push({ limit: L, key: v }); }); });
+        var order = ["abstract", "charged", "totalui", "lt", "bet", "gt", "all"];
+        [60, 90].forEach(function (L) { order.forEach(function (v) { which.push({ limit: L, key: v }); }); });
         return save(NCL.buildWorkbook(X, state.rep, which, cfg.credit, cfg.abstractPageBreakAfter), "NCL_60_AND_90_DAYS_REPORTS_" + NCL.dmy(state.asOn) + ".xlsx");
       });
     });

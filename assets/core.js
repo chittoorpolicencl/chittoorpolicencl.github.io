@@ -228,7 +228,11 @@
              title: "NEW CRIMINAL LAWS - " + limit + " DAYS INVESTIGATION CASES - UI CASES BETWEEN " + L.warn + "-" + limit + " DAYS AS ON " },
       gt: { sheet: "UI_MORETHAN_" + limit + "_DAYS", label: "UI > " + limit + " days", remark: L.gt,
             title: "NEW CRIMINAL LAWS - " + limit + " DAYS INVESTIGATION CASES - UI CASES >" + limit + " DAYS AS ON " },
-      all: { sheet: "NCL_" + limit, label: "All cases" }
+      all: { sheet: "NCL_" + limit, label: "All cases" },
+      charged: { sheet: "TOTAL_CHARGED_" + limit, label: "Total charged",
+                 title: "NEW CRIMINAL LAWS - " + limit + " DAYS CASES - TOTAL CHARGED (FR/CS WITHIN + AFTER " + limit + " DAYS + LAD AT UI STAGE) AS ON " },
+      totalui: { sheet: "TOTAL_UI_" + limit, label: "Total UI",
+                 title: "NEW CRIMINAL LAWS - " + limit + " DAYS CASES - TOTAL UI CASES (UI<" + L.warn + " + UI " + L.warn + "-" + limit + " + UI>" + limit + " DAYS) AS ON " }
     };
   }
 
@@ -239,6 +243,9 @@
     ["lt", "bet", "gt"].forEach(function (k) {
       lists[k] = recs.filter(function (o) { return o.remark === defs[k].remark; });
     });
+    var L = labels(limit), grp = criteriaGroups(L);
+    lists.charged = recs.filter(function (o) { return grp[L.totalCharged].indexOf(o.remark) >= 0; });
+    lists.totalui = recs.filter(function (o) { return grp[L.totalUi].indexOf(o.remark) >= 0; });
     return { limit: limit, asOn: asOn, labels: labels(limit), defs: defs,
              records: recs, abstract: abstract(recs, limit, cfg), lists: lists };
   }
@@ -318,6 +325,39 @@
     return ws;
   }
 
+  /* Total charged: disposed cases with charge-sheet date, days taken and remark */
+  function addChargedSheet(wb, name, title, recs, credit) {
+    var n = 10, ws = sheet(wb, name, [6, 26, 11, 12, 54, 16, 13, 10, 25, 9], 0, credit);
+    titleRow(ws, title, n);
+    headRow(ws, ["S.NO", "POLICE STATION", "FIR NO", "FIR DT", "ACTS & SEC", "Stage Of The Case",
+                 "CHARGESHEET DATE", "Days Taken", "Remarks", "SUB_DIV"], 34);
+    var al = ["center", "left", "center", "center", "left", "left", "center", "center", "left", "center"];
+    recs.forEach(function (o, i) {
+      var row = ws.addRow([i + 1, o.ps, o.fir, xlDate(o.fd), o.acts, o.stage, xlDate(o.cd), o.days, o.remark, o.sd]);
+      row.getCell(4).numFmt = "dd-mm-yyyy"; row.getCell(7).numFmt = "dd-mm-yyyy"; row.getCell(3).numFmt = "@";
+      styleRow(row, n, { align: al, fill: i % 2 ? C.zebra : null });
+    });
+    ws.pageSetup.printTitlesRow = "1:2";
+    ws.views = [{ state: "frozen", ySplit: 2 }];
+    return ws;
+  }
+
+  /* Total UI: all pending cases with days pending and the UI band; UI>limit in red */
+  function addTotalUiSheet(wb, name, title, recs, L, credit) {
+    var n = 8, ws = sheet(wb, name, [7, 30, 13, 13, 80, 12, 22, 11], 0, credit);
+    titleRow(ws, title, n);
+    headRow(ws, ["S.NO", "POLICE STATION", "FIR NO", "FIR DT", "ACTS & SEC", "Days Duration", "Remarks", "SUB_DIV"], 34);
+    var al = ["center", "left", "center", "center", "left", "center", "left", "center"];
+    recs.forEach(function (o, i) {
+      var row = ws.addRow([i + 1, o.ps, o.fir, xlDate(o.fd), o.acts, o.days, o.remark, o.sd]);
+      row.getCell(4).numFmt = "dd-mm-yyyy"; row.getCell(3).numFmt = "@";
+      styleRow(row, n, { align: al, fill: i % 2 ? C.zebra : null, red: o.remark === L.gt ? [6, 7] : null });
+    });
+    ws.pageSetup.printTitlesRow = "1:2";
+    ws.views = [{ state: "frozen", ySplit: 2 }];
+    return ws;
+  }
+
   /* Abstract: two Legal landscape pages, page 1 ends after the "page break" sub-division's total row */
   function addAbstractSheet(wb, name, ab, credit, breakAfter) {
     var n = 11, SUM = [3, 7], RED = [10], al = ["center", "left"], ROW = 19;
@@ -352,6 +392,8 @@
       var R = rep[w.limit]; if (!R) return;
       var d = R.defs[w.key];
       if (w.key === "abstract") addAbstractSheet(wb, d.sheet, R.abstract, credit, breakAfter || "KPM");
+      else if (w.key === "charged") addChargedSheet(wb, d.sheet, d.title + dmy(R.asOn), w.records || R.lists.charged, credit);
+      else if (w.key === "totalui") addTotalUiSheet(wb, d.sheet, d.title + dmy(R.asOn), w.records || R.lists.totalui, R.labels, credit);
       else if (w.key === "all") addAllSheet(wb, d.sheet, allTitle(R), w.records || R.records, R.labels, credit);
       else addListSheet(wb, d.sheet, d.title + dmy(R.asOn), w.records || R.lists[w.key], credit);
     });
