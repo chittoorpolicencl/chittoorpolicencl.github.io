@@ -514,6 +514,22 @@
   }
 
   function openAdmin() { drawAdmin(); $("adminDlg").showModal(); }
+
+  /* user name + Logout at the top right of the page */
+  var userBox = document.createElement("div");
+  userBox.className = "userbox"; userBox.hidden = true;
+  userBox.innerHTML = '<span class="uname" id="uName"></span><button class="btn ghost small" id="uOut" type="button">Logout</button>';
+  document.querySelector(".top-actions").appendChild(userBox);
+  $("uOut").onclick = function () { logout(); };
+  function updateUserBox() {
+    userBox.hidden = !auth;
+    $("uName").textContent = auth ? auth.user : "";
+    $("adminBtn").textContent = auth ? "Upload / Delete" : "Admin";
+  }
+  function logout() {
+    auth = null; updateUserBox();
+    if ($("adminDlg").open) drawAdmin('<div class="msg ok">You have logged out.</div>');
+  }
   function note(kind, text) { $("aMsg").innerHTML = text ? '<div class="msg ' + kind + '">' + text + "</div>" : ""; }
 
   function drawAdmin(msg) {
@@ -555,7 +571,7 @@
       }).join("") +
       '<button class="btn danger" type="button" data-del="60,90,cc"' + (any ? "" : " disabled") + ">Delete all</button></div>" +
       '<div id="aMsg">' + (msg || "") + "</div>";
-    $("aOut").onclick = function () { auth = null; drawAdmin(); };
+    $("aOut").onclick = function () { logout(); };
     KINDS.forEach(function (L) { $("aF" + L).onchange = function () { pick(L, this.files[0]); }; });
     $("aPub").onclick = publish;
     body.querySelectorAll("[data-del]").forEach(function (b) {
@@ -587,14 +603,14 @@
     if (!u || !p) { note("err", "Enter the user name and password."); return; }
     auth = { user: u, pass: p };
     note("wait", "Checking…"); $("aIn").disabled = true;
-    api({ action: "login" }).then(function () { drawAdmin(); }, function (e) {
-      auth = null; note("err", esc(e.message));
+    api({ action: "login" }).then(function () { updateUserBox(); drawAdmin(); }, function (e) {
+      auth = null; updateUserBox(); note("err", esc(e.message));
       if ($("aIn")) $("aIn").disabled = false;
     });
   }
 
   function failed(e, what) {
-    if (e.auth) { auth = null; drawAdmin('<div class="msg err">' + esc(e.message) + "</div>"); return; }
+    if (e.auth) { auth = null; updateUserBox(); drawAdmin('<div class="msg err">' + esc(e.message) + "</div>"); return; }
     note("err", what + " " + esc(e.message));
   }
 
