@@ -14,6 +14,9 @@
                  l60: "60 Days Cases UI >60 Days", l90: "90 Days Cases UI >90 Days" };
   var KINDS = ["60", "90", "cc"];                             // uploaded files: 60 DAYS, 90 DAYS, CCDASHBOARD
   var kindLabel = function (k) { return k === "cc" ? "CCDASHBOARD" : k + " DAYS"; };
+  var OLD_SERVER_MSG = "<b>The Google Apps Script is an old version — it cannot store the CCDASHBOARD file.</b> " +
+    "Open the Apps Script project, replace the code with the latest Code.gs, save, then Deploy → Manage deployments → Edit → " +
+    "Version: New version → Deploy.";
   var BLANK = function () { return { sd: "", ps: "", cat: "", q: "", grave: "", band: "" }; };
 
   var state = {
@@ -56,6 +59,7 @@
       .then(function (r) { return r.json(); })
       .then(function (j) {
         if (!j.ok) throw new Error(j.error || "error");
+        state.oldServer = !("dcc" in j);       // Apps Script from before CCDASHBOARD support
         KINDS.forEach(function (k) {
           var d = j["d" + k];
           state.data[k] = d && Array.isArray(d.rows) ? d : null;
@@ -141,6 +145,7 @@
   function renderNotice(R) {
     var parts = [];
     if (state.problem) parts.push(state.problem);
+    if (state.oldServer) parts.push(OLD_SERVER_MSG);
     if (state.preview) parts.push("<b>Preview only.</b> These files are loaded on this device and are not saved yet. Open Admin and press Upload.");
     if (state.asOn !== NCL.todayIso()) parts.push("Days are calculated as on <b>" + NCL.dmy(state.asOn) + "</b>, not today.");
     if (R) {
@@ -549,6 +554,7 @@
       return;
     }
     var any = published[60] || published[90] || published.cc;
+    if (state.oldServer && !msg) msg = '<div class="msg err">' + OLD_SERVER_MSG + "</div>";
     body.innerHTML =
       '<p class="help" style="margin-top:0">Logged in as <b>' + esc(auth.user) + "</b>. " +
       '<button class="btn" id="aOut" type="button" style="padding:2px 8px;margin-left:6px">Logout</button></p>' +
@@ -653,8 +659,18 @@
     }
     items.forEach(function (L) { files[L] = pending[L]; });
     $("aPub").disabled = true; note("wait", "Uploading…");
-    api({ action: "save", files: files }).then(function () {
-      items.forEach(function (L) { published[L] = { file: pending[L].meta.file, n: pending[L].rows.length }; pending[L] = null; });
+    api({ action: "save", files: files }).then(function (j) {
+      var saved = (j.saved || []).map(String);
+      var lost = items.filter(function (L) { return saved.indexOf(String(L)) < 0; });
+      items.forEach(function (L) {
+        if (saved.indexOf(String(L)) < 0) return;
+        published[L] = { file: pending[L].meta.file, n: pending[L].rows.length }; pending[L] = null;
+      });
+      if (lost.length) {
+        state.oldServer = true; render();
+        drawAdmin('<div class="msg err">' + lost.map(kindLabel).join(", ") + " was NOT saved. " + OLD_SERVER_MSG + "</div>");
+        return;
+      }
       state.preview = false; render();
       drawAdmin('<div class="msg ok">Uploaded. The new reports are now visible to everyone.</div>');
     }, function (e) { failed(e, "Not uploaded."); if ($("aPub")) $("aPub").disabled = false; });
