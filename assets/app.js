@@ -1,7 +1,7 @@
 /* Page code: loading data, showing reports, export, admin upload. */
 (function () {
   "use strict";
-  var cfg = window.NCL_CONFIG, NCL = window.NCL;
+  var cfg = window.NCL_CONFIG, NCL = window.NCL, NCLG = window.NCLG;
   var $ = function (id) { return document.getElementById(id); };
   var esc = function (s) {
     return String(s == null ? "" : s).replace(/[&<>"']/g, function (c) {
@@ -9,18 +9,24 @@
     });
   };
   var VIEWS = ["abstract", "lt", "bet", "gt", "all"];
+  var GVIEWS = ["a60", "a90", "l60", "l90"];                 // UI - Grave / Non Grave section
+  var GLABEL = { a60: "Abstract 60 Days", a90: "Abstract 90 Days", l60: "UI cases 60 Days", l90: "UI cases 90 Days" };
+  var KINDS = ["60", "90", "cc"];                             // uploaded files: 60 DAYS, 90 DAYS, CCDASHBOARD
+  var kindLabel = function (k) { return k === "cc" ? "CCDASHBOARD" : k + " DAYS"; };
+  var BLANK = function () { return { sd: "", ps: "", cat: "", q: "", grave: "", band: "" }; };
 
   var state = {
-    data: { 60: null, 90: null },      // published (or previewed) data files
+    data: { 60: null, 90: null, cc: null },   // published (or previewed) data files
     rep: {},                           // computed reports
+    grave: {},                         // grave / non grave reports (need CCDASHBOARD)
     asOn: NCL.todayIso(),
     tab: "60", view: "abstract",
-    f: { sd: "", ps: "", cat: "", q: "" },
+    f: BLANK(),
     back: [],                          // where the Back button returns to
     preview: false, problem: ""
   };
-  var published = { 60: null, 90: null };   // what is saved on the server now
-  var pending = { 60: null, 90: null };     // files chosen but not published yet
+  var published = { 60: null, 90: null, cc: null };   // what is saved on the server now
+  var pending = { 60: null, 90: null, cc: null };     // files chosen but not published yet
 
   /* ---------------- start ---------------- */
   $("unitName").textContent = cfg.unitName;
@@ -49,10 +55,10 @@
       .then(function (r) { return r.json(); })
       .then(function (j) {
         if (!j.ok) throw new Error(j.error || "error");
-        [60, 90].forEach(function (L) {
-          var d = j["d" + L];
-          state.data[L] = d && Array.isArray(d.rows) ? d : null;
-          published[L] = state.data[L] ? { file: d.meta && d.meta.file, n: d.rows.length } : null;
+        KINDS.forEach(function (k) {
+          var d = j["d" + k];
+          state.data[k] = d && Array.isArray(d.rows) ? d : null;
+          published[k] = state.data[k] ? { file: d.meta && d.meta.file, n: d.rows.length } : null;
         });
         state.problem = "";
       })
@@ -61,44 +67,52 @@
   }
 
   function readHash(silent) {
-    var m = /^#(60|90)\/(\w+)$/.exec(location.hash);
-    if (m && VIEWS.indexOf(m[2]) >= 0 && (m[1] !== state.tab || m[2] !== state.view)) {
-      state.tab = m[1]; state.view = m[2]; state.f = { sd: "", ps: "", cat: "", q: "" };
+    var m = /^#(60|90|g)\/(\w+)$/.exec(location.hash);
+    if (m && (m[1] === "g" ? GVIEWS : VIEWS).indexOf(m[2]) >= 0 && (m[1] !== state.tab || m[2] !== state.view)) {
+      state.tab = m[1]; state.view = m[2]; state.f = BLANK();
     }
     if (silent !== true) render();
   }
   function go(tab, view, filters, isBack) {
+    if (tab === "g" && GVIEWS.indexOf(view) < 0) view = "a60";
+    if (tab !== "g" && VIEWS.indexOf(view) < 0) view = "abstract";
     if (!isBack && (tab !== state.tab || view !== state.view)) {
       state.back.push({ tab: state.tab, view: state.view, f: Object.assign({}, state.f) });
       if (state.back.length > 30) state.back.shift();
     }
     state.tab = tab; state.view = view;
-    state.f = Object.assign({ sd: "", ps: "", cat: "", q: "" }, filters || {});
+    state.f = Object.assign(BLANK(), filters || {});
     history.replaceState(null, "", "#" + tab + "/" + view);
     render();
     window.scrollTo(0, 0);
   }
   function goBack() {
-    var p = state.back.pop() || { tab: state.tab, view: "abstract", f: {} };
+    var p = state.back.pop() || { tab: state.tab, view: state.tab === "g" ? "a60" : "abstract", f: {} };
     go(p.tab, p.view, p.f, true);
   }
-  function resetFilters() { state.f = { sd: "", ps: "", cat: "", q: "" }; render(); }
+  function resetFilters() { state.f = BLANK(); render(); }
   function recompute() {
     state.rep = {};
     [60, 90].forEach(function (L) {
       if (state.data[L]) state.rep[L] = NCL.build(state.data[L].rows, L, state.asOn, cfg);
     });
+    state.grave = {};
+    if (state.data.cc) [60, 90].forEach(function (L) {
+      if (state.rep[L]) state.grave[L] = NCLG.build(state.rep[L], state.data.cc.rows, cfg);
+    });
   }
 
   /* ---------------- rendering ---------------- */
   function render() {
-    var R = state.rep[state.tab], has = !!(state.rep[60] || state.rep[90]);
-    $("nav").hidden = !has; $("bar").hidden = !R;
+    var isG = state.tab === "g";
+    var R = isG ? null : state.rep[state.tab], has = !!(state.rep[60] || state.rep[90]);
+    $("nav").hidden = !has; $("bar").hidden = isG ? !graveOf(state.view) : !R;
     document.querySelectorAll(".seg button").forEach(function (b) {
       b.setAttribute("aria-selected", b.dataset.tab === state.tab ? "true" : "false");
     });
     renderNotice(R);
     renderMeta();
+    if (has && isG) { renderGrave(); return; }
     if (!has) {
       $("view").innerHTML = '<div class="sheet"><div class="empty"><b>No records are available.</b><br>' +
         'Use <b>Admin</b> (top right) to sign in and upload the 60 DAYS and 90 DAYS Excel files.</div></div>';
@@ -126,7 +140,7 @@
   function renderNotice(R) {
     var parts = [];
     if (state.problem) parts.push(state.problem);
-    if (state.preview) parts.push("<b>Preview only.</b> These files are loaded on this device and are not published yet. Open Admin and press Publish.");
+    if (state.preview) parts.push("<b>Preview only.</b> These files are loaded on this device and are not saved yet. Open Admin and press Upload.");
     if (state.asOn !== NCL.todayIso()) parts.push("Days are calculated as on <b>" + NCL.dmy(state.asOn) + "</b>, not today.");
     if (R) {
       var u = Object.keys(R.abstract.unmatched);
@@ -135,16 +149,20 @@
       }).join(", ") + " — these stations are not in the sub-division list (assets/config.js).");
       if (R.abstract.unclassified) parts.push(R.abstract.unclassified + " case(s) have a missing or unreadable date and are not counted.");
     }
+    var G = state.tab === "g" && graveOf(state.view);
+    if (G && G.notFound) parts.push(G.notFound + " UI case(s) of " + G.limit + " DAYS were not found in the CCDASHBOARD file; they are counted as Non Grave " +
+      "(shown as “Not in CCDASHBOARD” in the UI cases list).");
+    if (G && Object.keys(G.unmatched).length) parts.push("<b>Not in the abstract:</b> " + Object.keys(G.unmatched).map(esc).join(", "));
     $("notice").hidden = !parts.length;
     $("notice").innerHTML = parts.join("<br>");
   }
 
   function renderMeta() {
-    var bits = [60, 90].map(function (L) {
+    var bits = KINDS.map(function (L) {
       var m = state.data[L] && state.data[L].meta;
       if (!m) return null;
       var t = m.uploadedAt ? new Date(m.uploadedAt) : null;
-      return L + " DAYS: " + esc(m.file || "file") + ", " + state.data[L].rows.length + " cases" +
+      return kindLabel(L) + ": " + esc(m.file || "file") + ", " + state.data[L].rows.length + (L === "cc" ? " rows" : " cases") +
         (t && !isNaN(t) ? ", uploaded " + t.toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" }) : "");
     }).filter(Boolean);
     $("meta").innerHTML = bits.join(" &nbsp;•&nbsp; ");
@@ -271,6 +289,137 @@
     });
   }
 
+  /* ---------------- UI - Grave / Non Grave ---------------- */
+  function graveOf(view) { return state.grave[view.slice(1)] || null; }
+
+  function renderGrave() {
+    var view = state.view, G = graveOf(view);
+    $("subtabs").innerHTML = GVIEWS.map(function (v) {
+      var g = graveOf(v), n = v.charAt(0) === "l" && g ? '<span class="n">' + g.cases.length + "</span>" : "";
+      return '<button type="button" data-view="' + v + '" aria-selected="' + (v === view) + '">' + GLABEL[v] + n + "</button>";
+    }).join("");
+    $("subtabs").querySelectorAll("button").forEach(function (b) {
+      b.addEventListener("click", function () { go("g", b.dataset.view); });
+    });
+    setPrintPage("landscape");
+    if (!G) {
+      $("filters").innerHTML = "";
+      var need = !state.data.cc ? "the <b>CCDASHBOARD</b> file" : "the <b>" + view.slice(1) + " DAYS</b> file";
+      $("view").innerHTML = '<div class="sheet"><div class="empty">This report needs ' + need +
+        '. Use <b>Admin</b> (top right) to log in and upload it.</div></div>';
+      return;
+    }
+    if (view.charAt(0) === "a") { $("filters").innerHTML = ""; renderGraveAbstract(G); }
+    else { renderGraveFilters(G); renderGraveList(G); }
+  }
+
+  function renderGraveAbstract(G) {
+    var L = G.labels, h = [], lv = "l" + G.limit, cols = G.columns;
+    var cls = function (j) { return "num" + (cols[j].sum || j === 0 ? " sumc" : "") + (cols[j].red ? " gtc" : ""); };
+    var cnt = function (v, f) {
+      return v ? '<button type="button" class="cnt" data-f="' + esc(JSON.stringify(f)) + '">' + v + "</button>" : "0";
+    };
+    var tiles = [[0, "TOTAL UI CASES", "sum"], [4, "TOTAL GRAVE UI", "grave"], [3, "GRAVE " + L.gt, "gt"],
+                 [8, "TOTAL NON GRAVE UI", "sum"], [7, "NON GRAVE " + L.gt, "gt"]];
+    h.push('<div class="tiles g5">');
+    tiles.forEach(function (t) {
+      h.push('<button type="button" class="tile ' + t[2] + '" data-f="' + esc(JSON.stringify(cols[t[0]].f)) + '"><div class="k">' +
+        esc(t[1]) + '</div><div class="v">' + G.grand[t[0]] + "</div></button>");
+    });
+    h.push("</div>");
+    h.push('<div class="sheet"><h2>' + esc(G.title) + '</h2><table class="abs gabs"><thead>' +
+      '<tr><th rowspan="2">S.NO</th><th rowspan="2">POLICE STATION</th><th rowspan="2" class="sumh">TOTAL UI<br>CASES</th>' +
+      '<th colspan="4" class="gh">' + G.limit + ' DAYS - GRAVE PENDING UI CASES</th>' +
+      '<th colspan="4" class="nh">' + G.limit + " DAYS - NON GRAVE PENDING UI CASES</th></tr><tr>");
+    [L.lt, L.bet, L.gt, "TOTAL GRAVE UI CASES", L.lt, L.bet, L.gt, "TOTAL NON GRAVE UI CASES"].forEach(function (c, i) {
+      var j = i + 1;
+      h.push('<th class="' + (cols[j].red ? "gth" : cols[j].sum ? "sumh" : j <= 4 ? "gh2" : "nh2") + '">' + NCL.wrapLabel(c).map(esc).join("<br>") + "</th>");
+    });
+    h.push("</tr></thead><tbody>");
+    var breakAfter = cfg.abstractPageBreakAfter || "KPM";
+    G.groups.forEach(function (g) {
+      h.push('<tr class="section"><td colspan="11">' + esc(g.title) + "</td></tr>");
+      g.rows.forEach(function (x) {
+        h.push('<tr><td class="num">' + x.sno + "</td><td>" + esc(x.ps) + "</td>");
+        x.counts.forEach(function (v, j) { h.push('<td class="' + cls(j) + '">' + cnt(v, Object.assign({ ps: x.ps }, cols[j].f)) + "</td>"); });
+        h.push("</tr>");
+      });
+      h.push('<tr class="total' + (g.code === breakAfter ? " pagebreak" : "") + '"><td colspan="2" class="c">' + esc(g.totalLabel) + "</td>");
+      g.counts.forEach(function (v, j) { h.push('<td class="' + cls(j) + '">' + cnt(v, Object.assign({ sd: g.code }, cols[j].f)) + "</td>"); });
+      h.push("</tr>");
+    });
+    h.push('<tr class="grand"><td colspan="2" class="c">Grand Total</td>');
+    G.grand.forEach(function (v, j) { h.push('<td class="' + cls(j) + '">' + cnt(v, cols[j].f) + "</td>"); });
+    h.push("</tr></tbody></table></div>");
+    $("view").innerHTML = h.join("");
+    $("view").querySelectorAll("[data-f]").forEach(function (b) {
+      b.addEventListener("click", function () { go("g", lv, JSON.parse(b.dataset.f)); });
+    });
+  }
+
+  function renderGraveFilters(G) {
+    var f = state.f, L = G.labels, h = '<button class="btn back" id="backBtn" type="button">← Back</button>';
+    h += '<label>Sub-division<select id="fSd"><option value="">All</option>' + cfg.subDivisions.map(function (g) {
+      return '<option value="' + g.code + '"' + (f.sd === g.code ? " selected" : "") + ">" + g.code + "</option>";
+    }).join("") + "</select></label>";
+    var stations = [];
+    cfg.subDivisions.forEach(function (g) { if (!f.sd || f.sd === g.code) stations = stations.concat(g.stations); });
+    h += '<label>Police station<select id="fPs"><option value="">All</option>' + stations.map(function (s) {
+      return "<option" + (f.ps === s ? " selected" : "") + ">" + esc(s) + "</option>";
+    }).join("") + "</select></label>";
+    h += '<label>Grave / Non Grave<select id="fGr"><option value="">All</option>' + ["GRAVE", "NON GRAVE"].map(function (s) {
+      return "<option" + (f.grave === s ? " selected" : "") + ">" + s + "</option>";
+    }).join("") + "</select></label>";
+    h += '<label>Remarks<select id="fBand"><option value="">All</option>' + [L.lt, L.bet, L.gt].map(function (s) {
+      return "<option" + (f.band === s ? " selected" : "") + ">" + esc(s) + "</option>";
+    }).join("") + "</select></label>";
+    h += '<label>Search<input id="fQ" type="search" placeholder="FIR no / section" value="' + esc(f.q) + '"></label>';
+    h += '<button class="btn" id="resetBtn" type="button">Reset</button>';
+    $("filters").innerHTML = h;
+    $("backBtn").onclick = goBack;
+    $("resetBtn").onclick = resetFilters;
+    $("fSd").onchange = function () { f.sd = this.value; f.ps = ""; render(); };
+    $("fPs").onchange = function () { f.ps = this.value; render(); };
+    $("fGr").onchange = function () { f.grave = this.value; render(); };
+    $("fBand").onchange = function () { f.band = this.value; render(); };
+    var timer;
+    $("fQ").oninput = function () {
+      var v = this.value; clearTimeout(timer);
+      timer = setTimeout(function () { f.q = v; renderGraveList(G); }, 200);
+    };
+  }
+
+  function graveRows(G) {
+    var f = state.f, q = f.q.trim().toUpperCase(), ps = NCL.key(f.ps);
+    return G.cases.filter(function (o) {
+      if (f.sd && o.sd !== f.sd) return false;
+      if (ps && NCL.key(o.ps) !== ps) return false;
+      if (f.grave && o.grave !== f.grave) return false;
+      if (f.band && o.band !== f.band) return false;
+      if (q && (o.fir + " " + o.acts + " " + o.ps).toUpperCase().indexOf(q) < 0) return false;
+      return true;
+    });
+  }
+  function gFiltered() { var f = state.f; return !!(f.sd || f.ps || f.grave || f.band || f.q.trim()); }
+
+  function renderGraveList(G) {
+    var rows = graveRows(G), L = G.labels, h = [];
+    h.push('<div class="sheet"><h2>' + esc(G.listTitle) + "</h2>");
+    h.push('<p class="count-line no-print">' + rows.length + " case(s)" + (gFiltered() ? " match the filters" : "") + "</p>");
+    if (!rows.length) { h.push('<div class="empty">No cases.</div></div>'); $("view").innerHTML = h.join(""); return; }
+    h.push("<table><thead><tr><th>S.NO</th><th>POLICE STATION</th><th>FIR NO</th><th>FIR DT</th><th>ACTS &amp; SEC</th>" +
+      "<th>Days Duration</th><th>Remarks</th><th>GRAVE TYPE</th><th>SUB_DIV</th></tr></thead><tbody>");
+    rows.forEach(function (o, i) {
+      var band = o.band === L.gt ? "gt" : o.band === L.bet ? "bet" : "lt";
+      h.push('<tr><td class="num">' + (i + 1) + "</td><td>" + esc(o.ps) + '</td><td class="nw">' + esc(o.fir) +
+        '</td><td class="c nw">' + NCL.dmy(o.fd) + '</td><td class="acts">' + esc(o.acts) + '</td><td class="num">' + o.days +
+        '</td><td><span class="tag ' + band + '">' + esc(o.band) + '</span></td><td><span class="gtag' +
+        (o.grave === "GRAVE" ? " grave" : "") + '">' + esc(o.type) + '</span></td><td class="c">' + esc(o.sd) + "</td></tr>");
+    });
+    h.push("</tbody></table></div>");
+    $("view").innerHTML = h.join("");
+  }
+
   /* ---------------- Excel export ---------------- */
   var excelLoading;
   function loadExcelJS() {
@@ -298,6 +447,7 @@
     return fn().catch(function (e) { alert(e.message || e); }).then(function () { btn.disabled = false; btn.textContent = t; });
   }
   function exportCurrent() {
+    if (state.tab === "g") { exportGraveCurrent(); return; }
     var R = state.rep[state.tab]; if (!R) return;
     busy($("xlBtn"), function () {
       return loadExcelJS().then(function (X) {
@@ -307,13 +457,30 @@
       });
     });
   }
+  function addGraveSheets(wb, L, kind, cases) {
+    var G = state.grave[L]; if (!G) return;
+    if (kind !== "list") NCLG.addAbstractSheet(wb, "GRAVE_ABS_" + L, G, cfg.credit, cfg.abstractPageBreakAfter || "KPM");
+    if (kind !== "abstract") NCLG.addListSheet(wb, "GRAVE_UI_" + L, G.listTitle, cases || G.cases, G, cfg.credit);
+  }
+  function exportGraveCurrent() {
+    var G = graveOf(state.view); if (!G) return;
+    busy($("xlBtn"), function () {
+      return loadExcelJS().then(function (X) {
+        var wb = new X.Workbook(), isA = state.view.charAt(0) === "a";
+        addGraveSheets(wb, G.limit, isA ? "abstract" : "list", isA ? null : graveRows(G));
+        return save(wb, (isA ? "GRAVE_ABS_" : "GRAVE_UI_") + G.limit + "_" + NCL.dmy(state.asOn) + ".xlsx");
+      });
+    });
+  }
   function exportAll() {
     busy($("xlAllBtn"), function () {
       return loadExcelJS().then(function (X) {
         var which = [];
         var order = ["abstract", "charged", "totalui", "lt", "bet", "gt", "all"];
         [60, 90].forEach(function (L) { order.forEach(function (v) { which.push({ limit: L, key: v }); }); });
-        return save(NCL.buildWorkbook(X, state.rep, which, cfg.credit, cfg.abstractPageBreakAfter), "NCL_60_AND_90_DAYS_REPORTS_" + NCL.dmy(state.asOn) + ".xlsx");
+        var wb = NCL.buildWorkbook(X, state.rep, which, cfg.credit, cfg.abstractPageBreakAfter);
+        [60, 90].forEach(function (L) { addGraveSheets(wb, L); });
+        return save(wb, "NCL_60_AND_90_DAYS_REPORTS_" + NCL.dmy(state.asOn) + ".xlsx");
       });
     });
   }
@@ -352,38 +519,43 @@
       $("aPass").onkeydown = function (e) { if (e.key === "Enter") signIn(); };
       return;
     }
-    var any = published[60] || published[90];
+    var any = published[60] || published[90] || published.cc;
     body.innerHTML =
       '<p class="help" style="margin-top:0">Logged in as <b>' + esc(auth.user) + "</b>. " +
       '<button class="btn" id="aOut" type="button" style="padding:2px 8px;margin-left:6px">Logout</button></p>' +
       "<h3>Upload Excel files</h3>" +
-      [60, 90].map(function (L) {
-        return '<div class="file"><b>' + L + ' DAYS Excel file</b><input type="file" id="aF' + L + '" accept=".xlsx,.xls,.xlsm,.csv">' +
+      KINDS.map(function (L) {
+        return '<div class="file"><b>' + kindLabel(L) + ' Excel file</b><input type="file" id="aF' + L + '" accept=".xlsx,.xls,.xlsm,.csv">' +
           '<div class="sum" id="aS' + L + '">' + summary(L) + "</div></div>";
       }).join("") +
-      '<p class="help">Choose one or both files (columns A:H). A new file replaces the existing records of that type. ' +
+      '<p class="help">Choose any of the files. 60 / 90 DAYS: columns A:H. CCDASHBOARD: needs POLICE STATION, FIR NO and GRAVE TYPE ' +
+      "(used for the UI - Grave / Non Grave reports). A new file replaces the existing records of that type. " +
       "The reports behind this window show a preview; nothing is saved until you press Upload.</p>" +
       '<div class="actions"><button class="btn primary" id="aPub" type="button"' +
-      (pending[60] || pending[90] ? "" : " disabled") + ">Upload</button></div>" +
+      (pending[60] || pending[90] || pending.cc ? "" : " disabled") + ">Upload</button></div>" +
       "<h3>Delete existing records</h3>" +
       '<div class="actions del">' +
-      [60, 90].map(function (L) {
-        return '<button class="btn danger" type="button" data-del="' + L + '"' + (published[L] ? "" : " disabled") + ">Delete " + L + " DAYS" +
+      KINDS.map(function (L) {
+        return '<button class="btn danger" type="button" data-del="' + L + '"' + (published[L] ? "" : " disabled") + ">Delete " + kindLabel(L) +
           (published[L] ? " (" + published[L].n + ")" : "") + "</button>";
       }).join("") +
-      '<button class="btn danger" type="button" data-del="60,90"' + (any ? "" : " disabled") + ">Delete all</button></div>" +
+      '<button class="btn danger" type="button" data-del="60,90,cc"' + (any ? "" : " disabled") + ">Delete all</button></div>" +
       '<div id="aMsg">' + (msg || "") + "</div>";
     $("aOut").onclick = function () { auth = null; drawAdmin(); };
-    [60, 90].forEach(function (L) { $("aF" + L).onchange = function () { pick(L, this.files[0]); }; });
+    KINDS.forEach(function (L) { $("aF" + L).onchange = function () { pick(L, this.files[0]); }; });
     $("aPub").onclick = publish;
     body.querySelectorAll("[data-del]").forEach(function (b) {
-      b.onclick = function () { removeRecords(b.dataset.del.split(",").map(Number)); };
+      b.onclick = function () { removeRecords(b.dataset.del.split(",")); };
     });
   }
 
   function summary(L) {
     var p = pending[L];
-    if (!p) return published[L] ? "Existing records: " + esc(published[L].file || "") + " (" + published[L].n + " cases)" : "No records at present.";
+    var unit = L === "cc" ? " rows" : " cases";
+    if (!p) return published[L] ? "Existing records: " + esc(published[L].file || "") + " (" + published[L].n + unit + ")" : "No records at present.";
+    if (L === "cc") return "Ready: " + esc(p.meta.file) + " — " + p.rows.length + " rows (" + Object.keys(p.meta.counts).map(function (k) {
+      return esc(k) + " " + p.meta.counts[k];
+    }).join(", ") + ").";
     var t = "Ready: " + esc(p.meta.file) + " — " + p.meta.read + " rows read, " + p.rows.length + " cases kept";
     if (p.meta.removed) t += ", " + p.meta.removed + " removed (excluded stations)";
     if (p.meta.badFirDate) t += ", " + p.meta.badFirDate + " with unreadable FIR date";
@@ -412,11 +584,20 @@
     file.arrayBuffer().then(function (buf) {
       var wb = XLSX.read(new Uint8Array(buf), { type: "array" });
       var aoa = XLSX.utils.sheet_to_json(wb.Sheets[wb.SheetNames[0]], { header: 1, raw: true, defval: "" });
+      if (L === "cc") {
+        var d = NCLG.importDashboard(aoa);
+        if (!d.rows.length) throw new Error("No rows were found in this CCDASHBOARD file.");
+        pending.cc = { meta: { file: file.name, uploadedAt: new Date().toISOString(), read: d.read, counts: d.counts }, rows: d.rows };
+        state.data.cc = pending.cc; state.preview = true;
+        recompute(); go("g", state.tab === "g" ? state.view : "a60"); drawAdmin();
+        return;
+      }
       var imp = NCL.importRows(aoa, cfg);
       if (!imp.rows.length) throw new Error("No case rows were found in this file.");
       pending[L] = { meta: { file: file.name, uploadedAt: new Date().toISOString(), read: imp.read,
                              removed: imp.removed, badFirDate: imp.badFirDate }, rows: imp.rows };
       state.data[L] = pending[L]; state.preview = true; state.tab = String(L);
+      if (VIEWS.indexOf(state.view) < 0) state.view = "abstract";
       recompute(); render(); drawAdmin();
       var u = Object.keys(state.rep[L].abstract.unmatched);
       if (u.length) note("err", "Stations not in the sub-division list (left out of the abstract): " + esc(u.join(", ")));
@@ -424,7 +605,7 @@
   }
 
   function publish() {
-    var items = [60, 90].filter(function (L) { return pending[L]; }), files = {};
+    var items = KINDS.filter(function (L) { return pending[L]; }), files = {};
     if (!auth || !items.length) return;
     items.forEach(function (L) { files[L] = pending[L]; });
     $("aPub").disabled = true; note("wait", "Uploading…");
@@ -438,7 +619,7 @@
   function removeRecords(which) {
     which = which.filter(function (L) { return published[L]; });
     if (!auth || !which.length) return;
-    var label = which.map(function (L) { return L + " DAYS"; }).join(" and ");
+    var label = which.map(kindLabel).join(" and ");
     if (!window.confirm("Delete the existing " + label + " records?\nThe reports will be empty until a new file is uploaded.")) return;
     note("wait", "Deleting…");
     api({ action: "delete", which: which }).then(function () {
