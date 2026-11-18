@@ -19,7 +19,10 @@ main{max-width:1280px;margin:0 auto;padding:16px 20px 8px}
 .btn.primary{background:var(--accent);border-color:var(--accent);color:#fff}
 .btn.primary:hover{background:#174c9b;color:#fff}
 .btn.ghost{background:transparent;border-color:rgba(255,255,255,.5);color:#fff}
-.userbox{display:flex;flex-direction:column;align-items:center;gap:4px;padding-left:12px;border-left:1px solid rgba(255,255,255,.3)}
+.userbox{display:flex;flex-direction:row;align-items:center;gap:10px;padding-left:12px;border-left:1px solid rgba(255,255,255,.3)}
+.btn.core{background:#ffd966;border-color:#ffd966;color:#14294d;font-weight:700}
+.btn.core:hover{background:#ffe699;border-color:#fff;color:#14294d}
+.btn.core:disabled{opacity:.8}
 .userbox[hidden]{display:none}
 .uname{font-size:13px;font-weight:600;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
 .uname::before{content:"\1F464  "}

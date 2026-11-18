@@ -452,6 +452,68 @@
     });
     return excelLoading;
   }
+  /* ---------------- Core Team Reports: 10 numbered files in one ZIP ---------------- */
+  var scripts = {};
+  function loadScript(src) {
+    if (!scripts[src]) scripts[src] = new Promise(function (ok, fail) {
+      var el = document.createElement("script"); el.src = src;
+      el.onload = ok; el.onerror = function () { scripts[src] = null; fail(new Error("Could not load " + src)); };
+      document.head.appendChild(el);
+    });
+    return scripts[src];
+  }
+  function coreTeamReports() {
+    if (!auth) return;
+    var btn = $("coreBtn");
+    var need = [];
+    if (!state.rep[60]) need.push("60 DAYS"); if (!state.rep[90]) need.push("90 DAYS");
+    if (!state.grave[60] || !state.grave[90]) need.push("CCDASHBOARD");
+    if (need.length) { alert("Core Team Reports need the " + need.join(", ") + " data. Please upload it first."); return; }
+    var day = NCL.dmy(state.asOn), brk = cfg.abstractPageBreakAfter || "KPM", label = btn.textContent;
+    var step = function (t) { btn.textContent = t; };
+    btn.disabled = true; step("Preparing…");
+    loadExcelJS()
+      .then(function () { return loadScript("vendor/jspdf.umd.min.js"); })
+      .then(function () { return Promise.all([loadScript("vendor/jspdf.plugin.autotable.min.js"), loadScript("vendor/jszip.min.js"), loadScript("assets/pdf.js")]); })
+      .then(function () {
+        var X = window.ExcelJS, jsPDF = window.jspdf.jsPDF, P = window.NCLPDF;
+        var xl = function (L, key) {
+          return function () { return NCL.buildWorkbook(X, state.rep, [{ limit: L, key: key }], "", brk).xlsx.writeBuffer(); };
+        };
+        var pdf = function (make) { return function () { return Promise.resolve(make().output("arraybuffer")); }; };
+        var R60 = state.rep[60], R90 = state.rep[90];
+        var jobs = [
+          ["ABSTRACT_60", "pdf", pdf(function () { return P.abstractPdf(jsPDF, R60.abstract, NCL.wrapLabel, brk); })],
+          ["UI_LESSTHAN_45_DAYS", "xlsx", xl(60, "lt")],
+          ["UI_BET_45_TO_60_DAYS", "xlsx", xl(60, "bet")],
+          ["UI_MORETHAN_60_DAYS", "xlsx", xl(60, "gt")],
+          ["ABSTRACT_90", "pdf", pdf(function () { return P.abstractPdf(jsPDF, R90.abstract, NCL.wrapLabel, brk); })],
+          ["UI_LESSTHAN_75_DAYS", "xlsx", xl(90, "lt")],
+          ["UI_BET_75_TO_90_DAYS", "xlsx", xl(90, "bet")],
+          ["UI_MORETHAN_90_DAYS", "xlsx", xl(90, "gt")],
+          ["UI_GNG_60_DAYS", "pdf", pdf(function () { return P.graveAbstractPdf(jsPDF, state.grave[60], NCL.wrapLabel, brk); })],
+          ["UI_GNG_90_DAYS", "pdf", pdf(function () { return P.graveAbstractPdf(jsPDF, state.grave[90], NCL.wrapLabel, brk); })]
+        ];
+        var zip = new window.JSZip(), i = 0;
+        var next = function () {
+          if (i >= jobs.length) return Promise.resolve();
+          var j = jobs[i], name = (i + 1) + "_" + j[0] + "_" + day + "." + j[1];
+          step("Preparing " + (i + 1) + "/" + jobs.length + "…");
+          return j[2]().then(function (buf) { zip.file(name, buf); i++; return next(); });
+        };
+        return next().then(function () { step("Saving…"); return zip.generateAsync({ type: "blob", compression: "DEFLATE" }); });
+      })
+      .then(function (blob) {
+        var name = "NCL_REPORTS_" + day + ".zip", a = document.createElement("a");
+        a.href = URL.createObjectURL(blob); a.download = name; document.body.appendChild(a); a.click(); a.remove();
+        setTimeout(function () { URL.revokeObjectURL(a.href); }, 10000);
+        toast("Saved <b>" + name + "</b> in Downloads. Right-click it → <b>Extract All</b> to get the folder " +
+          "<b>NCL_REPORTS_" + day + "</b> with the 10 reports.");
+      })
+      .catch(function (e) { alert("Core Team Reports could not be prepared: " + (e.message || e)); })
+      .then(function () { btn.disabled = false; btn.textContent = label; });
+  }
+
   function safeName(s) { return s.replace(/[<>:"\/\\|?*]/g, "_").trim(); }
   function save(wb, name) {
     return wb.xlsx.writeBuffer().then(function (buf) {
@@ -534,9 +596,11 @@
   /* user name + Logout at the top right of the page */
   var userBox = document.createElement("div");
   userBox.className = "userbox"; userBox.hidden = true;
-  userBox.innerHTML = '<span class="uname" id="uName"></span><button class="btn ghost small" id="uOut" type="button">Logout</button>';
+  userBox.innerHTML = '<button class="btn core small" id="coreBtn" type="button">Core Team Reports</button>' +
+    '<span class="uname" id="uName"></span><button class="btn ghost small" id="uOut" type="button">Logout</button>';
   document.querySelector(".top-actions").appendChild(userBox);
   $("uOut").onclick = function () { logout(); };
+  $("coreBtn").onclick = function () { coreTeamReports(); };
   function updateUserBox() {
     userBox.hidden = !auth;
     $("uName").textContent = auth ? auth.user : "";
