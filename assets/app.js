@@ -542,7 +542,8 @@
           '<div class="sum" id="aS' + L + '">' + summary(L) + "</div></div>";
       }).join("") +
       '<p class="help">Choose any of the files. 60 / 90 DAYS: columns A:H. CCDASHBOARD: needs POLICE STATION, FIR NO and GRAVE TYPE ' +
-      "(used for the UI - Grave / Non Grave reports). <b>All three files must be chosen together</b>; they replace the existing records. " +
+      "(used for the UI - Grave / Non Grave reports). <b>60 DAYS and 90 DAYS must be chosen together.</b> " +
+      "CCDASHBOARD is kept until a new one is uploaded — choose it only to replace it. " +
       "The reports behind this window show a preview; nothing is saved until you press Upload.</p>" +
       '<div class="actions"><button class="btn primary" id="aPub" type="button"' +
       ">Upload</button></div>" +
@@ -565,7 +566,13 @@
   function summary(L) {
     var p = pending[L];
     var unit = L === "cc" ? " rows" : " cases";
-    if (!p) return published[L] ? "Existing records: " + esc(published[L].file || "") + " (" + published[L].n + unit + ")" : "No records at present.";
+    if (!p) {
+      if (!published[L]) return L === "cc" ? "No CCDASHBOARD stored yet — required for the first upload." : "No records at present.";
+      var m = state.data[L] && state.data[L].meta, t = m && m.uploadedAt ? new Date(m.uploadedAt) : null;
+      return (L === "cc" ? "Stored: " : "Existing records: ") + esc(published[L].file || "") + " (" + published[L].n + unit + ")" +
+        (t && !isNaN(t) ? ", uploaded " + t.toLocaleString("en-IN", { dateStyle: "medium", timeStyle: "short" }) : "") +
+        (L === "cc" ? ". No need to upload again unless it has changed." : "");
+    }
     if (L === "cc") return "Ready: " + esc(p.meta.file) + " — " + p.rows.length + " rows (" + Object.keys(p.meta.counts).map(function (k) {
       return esc(k) + " " + p.meta.counts[k];
     }).join(", ") + ").";
@@ -620,10 +627,12 @@
   function publish() {
     var items = KINDS.filter(function (L) { return pending[L]; }), files = {};
     if (!auth) return;
-    var missing = KINDS.filter(function (L) { return !pending[L]; });
+    /* 60 DAYS and 90 DAYS go together every time; CCDASHBOARD stays stored until it is replaced */
+    var missing = ["60", "90"].filter(function (L) { return !pending[L]; });
+    if (!pending.cc && !published.cc) missing.push("cc");
     if (missing.length) {
-      note("err", "Upload not done. Please choose all 3 files — 60 DAYS, 90 DAYS and CCDASHBOARD. Missing: <b>" +
-        missing.map(kindLabel).join(", ") + "</b>.");
+      note("err", "Upload not done. Please choose the " + missing.map(kindLabel).join(" and ") + " file" +
+        (missing.length > 1 ? "s" : "") + ".");
       return;
     }
     items.forEach(function (L) { files[L] = pending[L]; });
