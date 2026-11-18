@@ -30,6 +30,7 @@
     preview: false, problem: ""
   };
   var published = { 60: null, 90: null, cc: null };   // what is saved on the server now
+  var savedData = { 60: null, 90: null, cc: null };   // its data, to undo a preview
   var pending = { 60: null, 90: null, cc: null };     // files chosen but not published yet
 
   /* ---------------- start ---------------- */
@@ -64,6 +65,7 @@
           var d = j["d" + k];
           state.data[k] = d && Array.isArray(d.rows) ? d : null;
           published[k] = state.data[k] ? { file: d.meta && d.meta.file, n: d.rows.length } : null;
+          savedData[k] = state.data[k];
         });
         state.problem = "";
       })
@@ -519,6 +521,15 @@
   }
 
   function openAdmin() { drawAdmin(); $("adminDlg").showModal(); }
+  /* closing the window without logging in: forget the chosen files and the preview */
+  $("adminDlg").addEventListener("close", function () { if (!auth) discardPending(); });
+  function discardPending() {
+    var had = false;
+    KINDS.forEach(function (L) {
+      if (pending[L]) { had = true; pending[L] = null; state.data[L] = published[L] ? savedData[L] : null; }
+    });
+    if (had) { state.preview = false; recompute(); render(); }
+  }
 
   /* user name + Logout at the top right of the page */
   var userBox = document.createElement("div");
@@ -533,12 +544,14 @@
   }
   function logout() {
     auth = null; updateUserBox();
+    discardPending();
     if ($("adminDlg").open) drawAdmin('<div class="msg ok">You have logged out.</div>');
   }
   function note(kind, text) { $("aMsg").innerHTML = text ? '<div class="msg ' + kind + '">' + text + "</div>" : ""; }
 
   function drawAdmin(msg) {
     var body = $("adminBody");
+    var head = document.querySelector("#adminDlg h2"); if (head) head.textContent = auth ? "Upload / Delete" : "Login";
     if (!cfg.apiUrl) {
       body.innerHTML = '<div class="msg err">Admin is not set up yet. Deploy the Google Apps Script and paste its web app URL into ' +
         "<b>apiUrl</b> in assets/config.js (see README).</div>";
@@ -546,9 +559,24 @@
     }
     if (!auth) {
       body.innerHTML =
-        '<label for="aUser">User name</label><input type="text" id="aUser" autocomplete="username">' +
+        '<label for="aUser">User name</label><input type="text" id="aUser" autocomplete="username" value="' + esc(draft.user) + '">' +
         '<label for="aPass">Password</label><input type="password" id="aPass" autocomplete="current-password">' +
+        '<div id="aFiles">' +
+        '<p class="help"><b>Users must upload all three Excel files to log in</b> — 60 DAYS, 90 DAYS and CCDASHBOARD. ' +
+        "Login is not accepted without them.</p>" +
+        KINDS.map(function (L) {
+          return '<div class="file"><b>' + kindLabel(L) + ' Excel file</b><input type="file" id="aF' + L + '" accept=".xlsx,.xls,.xlsm,.csv">' +
+            '<div class="sum" id="aS' + L + '">' + loginSummary(L) + "</div></div>";
+        }).join("") + "</div>" +
         '<div id="aMsg">' + (msg || "") + '</div><div class="actions"><button class="btn primary" id="aIn" type="button">Login</button></div>';
+      var sync = function () {
+        draft.user = $("aUser").value;
+        var adm = isAdminName(draft.user);
+        $("aFiles").hidden = adm;
+        $("aIn").textContent = adm ? "Login" : "Upload & Login";
+      };
+      $("aUser").oninput = sync; sync();
+      KINDS.forEach(function (L) { $("aF" + L).onchange = function () { pick(L, this.files[0]); }; });
       $("aIn").onclick = signIn;
       $("aPass").onkeydown = function (e) { if (e.key === "Enter") signIn(); };
       return;
@@ -585,6 +613,21 @@
     });
   }
 
+  var draft = { user: "" };                    // keeps the typed user name while files are read
+  function isAdminName(u) { return String(u || "").trim().toLowerCase() === "admin"; }
+  function loginSummary(L) {
+    var p = pending[L];
+    return p ? summary(L) : "Not chosen yet.";
+  }
+  function refreshSummaries() {
+    KINDS.forEach(function (L) { if ($("aS" + L)) $("aS" + L).innerHTML = auth ? summary(L) : loginSummary(L); });
+  }
+  function toast(text) {
+    var t = $("toast") || document.body.appendChild(Object.assign(document.createElement("div"), { id: "toast", className: "toast" }));
+    t.innerHTML = text; t.classList.add("show");
+    clearTimeout(t._h); t._h = setTimeout(function () { t.classList.remove("show"); }, 5000);
+  }
+
   function summary(L) {
     var p = pending[L];
     var unit = L === "cc" ? " rows" : " cases";
@@ -607,12 +650,44 @@
   function signIn() {
     var u = $("aUser").value.trim(), p = $("aPass").value;
     if (!u || !p) { note("err", "Enter the user name and password."); return; }
-    auth = { user: u, pass: p };
-    note("wait", "Checking…"); $("aIn").disabled = true;
-    api({ action: "login" }).then(function () { updateUserBox(); drawAdmin(); }, function (e) {
-      auth = null; updateUserBox(); note("err", esc(e.message));
+    var btn = $("aIn");
+    var fail = function (e) {
+      auth = null; updateUserBox(); note("err", "Login not accepted. " + esc(e.message));
       if ($("aIn")) $("aIn").disabled = false;
-    });
+    };
+
+    if (isAdminName(u)) {                       // admin: name + password only
+      auth = { user: u, pass: p };
+      note("wait", "Checking…"); btn.disabled = true;
+      api({ action: "login" }).then(function () {
+        updateUserBox(); drawAdmin('<div class="msg ok">Login succeeded.</div>');
+        toast("Login succeeded — welcome, <b>" + esc(u) + "</b>.");
+      }, fail);
+      return;
+    }
+
+    /* users: all three files are uploaded as part of the login */
+    var missing = KINDS.filter(function (L) { return !pending[L]; });
+    if (missing.length) {
+      note("err", "Login not accepted. Please choose all three Excel files. Missing: <b>" + missing.map(kindLabel).join(", ") + "</b>.");
+      return;
+    }
+    auth = { user: u, pass: p };
+    note("wait", "Checking and uploading the three files…"); btn.disabled = true;
+    var files = {}; KINDS.forEach(function (L) { files[L] = pending[L]; });
+    api({ action: "save", login: true, files: files }).then(function (j) {
+      var saved = (j.saved || []).map(String);
+      var lost = KINDS.filter(function (L) { return saved.indexOf(L) < 0; });
+      if (lost.length) {
+        state.oldServer = true; render();
+        throw new Error(lost.map(kindLabel).join(", ") + " was NOT saved. " + OLD_SERVER_MSG);
+      }
+      KINDS.forEach(function (L) { published[L] = { file: pending[L].meta.file, n: pending[L].rows.length }; savedData[L] = pending[L]; pending[L] = null; });
+      state.preview = false; draft.user = "";
+      updateUserBox(); render();
+      $("adminDlg").close();
+      toast("Login succeeded — <b>" + esc(u) + "</b>. The three files were uploaded and the reports are updated.");
+    }).catch(fail);
   }
 
   function failed(e, what) {
@@ -631,7 +706,7 @@
         if (!d.rows.length) throw new Error("No rows were found in this CCDASHBOARD file.");
         pending.cc = { meta: { file: file.name, uploadedAt: new Date().toISOString(), read: d.read, counts: d.counts }, rows: d.rows };
         state.data.cc = pending.cc; state.preview = true;
-        recompute(); go("g", state.tab === "g" ? state.view : "a60"); drawAdmin();
+        recompute(); go("g", state.tab === "g" ? state.view : "a60"); refreshSummaries(); note("", "");
         return;
       }
       var imp = NCL.importRows(aoa, cfg);
@@ -640,7 +715,7 @@
                              removed: imp.removed, badFirDate: imp.badFirDate }, rows: imp.rows };
       state.data[L] = pending[L]; state.preview = true; state.tab = String(L);
       if (VIEWS.indexOf(state.view) < 0) state.view = "abstract";
-      recompute(); render(); drawAdmin();
+      recompute(); render(); refreshSummaries(); note("", "");
       var u = Object.keys(state.rep[L].abstract.unmatched);
       if (u.length) note("err", "Stations not in the sub-division list (left out of the abstract): " + esc(u.join(", ")));
     }).catch(function (e) { $("aF" + L).value = ""; note("err", esc(e.message || String(e))); });
@@ -664,7 +739,7 @@
       var lost = items.filter(function (L) { return saved.indexOf(String(L)) < 0; });
       items.forEach(function (L) {
         if (saved.indexOf(String(L)) < 0) return;
-        published[L] = { file: pending[L].meta.file, n: pending[L].rows.length }; pending[L] = null;
+        published[L] = { file: pending[L].meta.file, n: pending[L].rows.length }; savedData[L] = pending[L]; pending[L] = null;
       });
       if (lost.length) {
         state.oldServer = true; render();
@@ -683,7 +758,7 @@
     if (!window.confirm("Delete the existing " + label + " records?\nThe reports will be empty until a new file is uploaded.")) return;
     note("wait", "Deleting…");
     api({ action: "delete", which: which }).then(function () {
-      which.forEach(function (L) { published[L] = null; if (!pending[L]) state.data[L] = null; });
+      which.forEach(function (L) { published[L] = null; savedData[L] = null; if (!pending[L]) state.data[L] = null; });
       recompute(); render();
       drawAdmin('<div class="msg ok">' + label + " records deleted.</div>");
     }, function (e) { failed(e, "Not deleted."); });
