@@ -255,7 +255,7 @@
   var LINE = { style: "thin", color: { argb: "FF7F7F7F" } };
   var BORDER = { top: LINE, left: LINE, bottom: LINE, right: LINE };
   var C = { title: "FF1F3864", head: "FF2F5597", section: "FFBDD7EE", total: "FFE2EFDA", grand: "FFFFD966",
-            sum: "FFF2F2F2", zebra: "FFF5F8FC", red: "FFC00000", white: "FFFFFFFF", ink: "FF000000" };
+            sum: "FFF2F2F2", zebra: "FFF5F8FC", red: "FFC00000", green: "FF00803C", greenHead: "FF00803C", white: "FFFFFFFF", ink: "FF000000" };
   function fill(argb) { return { type: "pattern", pattern: "solid", fgColor: { argb: argb } }; }
   function xlDate(iso) { return isIso(iso) ? new Date(iso + "T00:00:00Z") : (iso || null); }
 
@@ -263,10 +263,11 @@
   function styleRow(row, n, opt) {
     for (var c = 1; c <= n; c++) {
       var cell = row.getCell(c), red = opt.red && opt.red.indexOf(c) >= 0, shade = opt.shade && opt.shade.indexOf(c) >= 0;
+      var green = opt.green && opt.green.indexOf(c) >= 0;
       cell.border = BORDER;
       cell.alignment = { vertical: "middle", wrapText: true, horizontal: (opt.align && opt.align[c - 1]) || "center" };
-      cell.font = { name: "Calibri", size: opt.size || 11, bold: !!(opt.bold || red || shade),
-                    color: { argb: red ? C.red : (opt.color || C.ink) } };
+      cell.font = { name: "Calibri", size: opt.size || 11, bold: !!(opt.bold || red || shade || green),
+                    color: { argb: red ? C.red : green ? C.green : (opt.color || C.ink) } };
       if (opt.fill || shade) cell.fill = fill(opt.fill || C.sum);
     }
   }
@@ -286,10 +287,11 @@
     ws.addRow([text]); ws.mergeCells(1, 1, 1, n);
     styleRow(ws.getRow(1), n, { bold: true, size: 14, fill: C.title, color: C.white }); ws.getRow(1).height = 32;
   }
-  function headRow(ws, cells, height, red) {
+  function headRow(ws, cells, height, red, green) {
     var r = ws.addRow(cells);
     styleRow(r, cells.length, { bold: true, fill: C.head, color: C.white });
     (red || []).forEach(function (c) { r.getCell(c).fill = fill(C.red); });
+    (green || []).forEach(function (c) { r.getCell(c).fill = fill(C.greenHead); });
     r.height = height;
   }
 
@@ -360,24 +362,24 @@
 
   /* Abstract: two Legal landscape pages, page 1 ends after the "page break" sub-division's total row */
   function addAbstractSheet(wb, name, ab, credit, breakAfter) {
-    var n = 11, SUM = [3, 7], RED = [10], al = ["center", "left"], ROW = 19;
+    var n = 11, SUM = [3, 7], RED = [10], GREEN = [9], al = ["center", "left"], ROW = 19;
     var ws = sheet(wb, name, [6, 31, 14, 14, 14, 13, 14, 12, 14, 12, 12], "fixed", credit);
     titleRow(ws, ab.title, n);
     var head = ["S.NO", "POLICE STATION"].concat(ab.columns.map(function (c) { return wrapLabel(c).join("\n"); }), ["Grand\nTotal"]);
-    headRow(ws, head, 36, RED);
+    headRow(ws, head, 36, RED, GREEN);
     ab.groups.forEach(function (g) {
       var r = ws.addRow([g.title]); ws.mergeCells(r.number, 1, r.number, n);
       styleRow(r, n, { bold: true, size: 12, fill: C.section }); r.height = ROW;
       g.rows.forEach(function (x) {
         var row = ws.addRow([x.sno, x.ps].concat(x.counts, [x.total]));
-        styleRow(row, n, { align: al, red: RED, shade: SUM, size: 12 }); row.height = ROW;
+        styleRow(row, n, { align: al, red: RED, green: GREEN, shade: SUM, size: 12 }); row.height = ROW;
       });
       r = ws.addRow([g.totalLabel, null].concat(g.counts, [g.total])); ws.mergeCells(r.number, 1, r.number, 2);
-      styleRow(r, n, { bold: true, size: 12, fill: C.total, red: RED }); r.height = ROW;
+      styleRow(r, n, { bold: true, size: 12, fill: C.total, red: RED, green: GREEN }); r.height = ROW;
       if (g.code === breakAfter) r.addPageBreak();
     });
     var gr = ws.addRow([null, "Grand Total"].concat(ab.grand, [ab.grandTotal]));
-    styleRow(gr, n, { bold: true, size: 12, fill: C.grand, red: RED, align: al }); gr.height = ROW + 2;
+    styleRow(gr, n, { bold: true, size: 12, fill: C.grand, red: RED, green: GREEN, align: al }); gr.height = ROW + 2;
     ws.pageSetup.printTitlesRow = "1:2";
     ws.views = [{ state: "frozen", ySplit: 2 }];
     return ws;

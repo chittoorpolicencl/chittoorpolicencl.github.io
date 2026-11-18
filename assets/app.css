@@ -42,7 +42,7 @@ main{max-width:1280px;margin:0 auto;padding:16px 20px 8px}
 .tile:hover{border-color:var(--accent)}
 .tile .k{font-size:11.5px;color:var(--muted);word-break:break-word}
 .tile .v{font-size:24px;font-weight:600;font-variant-numeric:tabular-nums}
-.tile.gt .v{color:var(--red)} .tile.bet .v{color:var(--amber)}
+.tile.gt .v{color:var(--red)} .tile.bet .v{color:#00803c}
 .tile.sum{background:#eef2f8;border-color:#b9c4d6}
 .tile.gt{border-color:#e0a9a5}
 .sheet{background:var(--card);border:1px solid var(--line);border-radius:8px;padding:14px;overflow-x:auto}
@@ -63,6 +63,9 @@ thead th.gh{background:#833c0b;color:#fff} thead th.nh{background:#375623;color:
 thead th.gh2{background:#f4e4d7} thead th.nh2{background:#e2efda}
 .gtag{font-size:12.5px;white-space:nowrap} .gtag.grave{color:#833c0b;font-weight:700}
 td.gtc,td.gtc .cnt{color:var(--red);font-weight:700}
+td.betc,td.betc .cnt{color:#00803c;font-weight:700}
+thead th.beth{background:#00803c;color:#fff}
+.subtabs button.gtab{max-width:170px;white-space:normal;line-height:1.25;text-align:center}
 thead th.gth{background:#f8d7d4;color:var(--red)}
 thead th.sumh{background:#f0e2b0}
 tr.total td.sumc{background:var(--total)} tr.grand td.sumc{background:var(--grand)}
@@ -115,6 +118,8 @@ dialog::backdrop{background:rgba(15,25,45,.5)}
   .sheet h2{font-size:14px;margin:0 0 8px}
   td .cnt{color:inherit;text-decoration:none}
   td.gtc,td.gtc .cnt{color:#c00000!important}
+  td.betc,td.betc .cnt{color:#00803c!important}
+  thead th.beth{color:#fff!important}
   thead th.gh,thead th.nh{color:#fff!important}
   *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
   .tag{color:inherit!important;font-weight:400!important}

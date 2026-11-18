@@ -95,7 +95,8 @@
     return {
       limit: limit, labels: L, cases: cases, notFound: notFound, unmatched: unmatched,
       title: limit + " DAYS - NCL UI CASES - SD WISE & PS WISE ABSTRACT FROM " + cfg.fromDate + " TO " + addDays(R.asOn, -1),
-      listTitle: limit + " DAYS - NCL UI CASES - GRAVE / NON GRAVE AS ON " + addDays(R.asOn, 0),
+      listTitle: limit + " DAYS CASES - UI >" + limit + " DAYS - GRAVE / NON GRAVE AS ON " + addDays(R.asOn, 0),
+      asOnText: addDays(R.asOn, 0),
       groups: groups, grand: grand,
       /* column meta: label, filter it opens */
       columns: [

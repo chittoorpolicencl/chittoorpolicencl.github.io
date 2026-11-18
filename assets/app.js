@@ -10,7 +10,8 @@
   };
   var VIEWS = ["abstract", "lt", "bet", "gt", "all"];
   var GVIEWS = ["a60", "a90", "l60", "l90"];                 // UI - Grave / Non Grave section
-  var GLABEL = { a60: "Abstract 60 Days", a90: "Abstract 90 Days", l60: "UI cases 60 Days", l90: "UI cases 90 Days" };
+  var GLABEL = { a60: "UI Abstract 60 Days Cases", a90: "UI Abstract 90 Days Cases",
+                 l60: "60 Days Cases UI >60 Days", l90: "90 Days Cases UI >90 Days" };
   var KINDS = ["60", "90", "cc"];                             // uploaded files: 60 DAYS, 90 DAYS, CCDASHBOARD
   var kindLabel = function (k) { return k === "cc" ? "CCDASHBOARD" : k + " DAYS"; };
   var BLANK = function () { return { sd: "", ps: "", cat: "", q: "", grave: "", band: "" }; };
@@ -253,19 +254,19 @@
   function renderAbstract(R) {
     var ab = R.abstract, h = [];
     var kinds = ["sum", "", "", "", "sum", "lt", "bet", "gt"];           // one per abstract column
-    var cls = function (j) { return "num" + (kinds[j] === "sum" ? " sumc" : kinds[j] === "gt" ? " gtc" : ""); };
+    var cls = function (j) { return "num" + (kinds[j] === "sum" ? " sumc" : kinds[j] === "gt" ? " gtc" : kinds[j] === "bet" ? " betc" : ""); };
     var cnt = function (v, f) {
       return v ? '<button type="button" class="cnt" data-f="' + esc(JSON.stringify(f)) + '">' + v + "</button>" : "0";
     };
     h.push('<div class="tiles">');
     ab.columns.forEach(function (c, j) {
       h.push('<button type="button" class="tile ' + kinds[j] + '" data-f="' + esc(JSON.stringify({ cat: c })) +
-        '"><div class="k">' + esc(c) + '</div><div class="v">' + ab.grand[j] + "</div></button>");
+        '"><div class="k">' + NCL.wrapLabel(c).map(esc).join("<br>") + '</div><div class="v">' + ab.grand[j] + "</div></button>");
     });
     h.push("</div>");
     h.push('<div class="sheet"><h2>' + esc(ab.title) + '</h2><table class="abs"><thead><tr><th>S.NO</th><th>POLICE STATION</th>');
     ab.columns.forEach(function (c, j) {
-      h.push('<th class="' + (kinds[j] === "gt" ? "gth" : kinds[j] === "sum" ? "sumh" : "") + '">' + NCL.wrapLabel(c).map(esc).join("<br>") + "</th>");
+      h.push('<th class="' + (kinds[j] === "gt" ? "gth" : kinds[j] === "bet" ? "beth" : kinds[j] === "sum" ? "sumh" : "") + '">' + NCL.wrapLabel(c).map(esc).join("<br>") + "</th>");
     });
     h.push("<th>Grand<br>Total</th></tr></thead><tbody>");
     var breakAfter = cfg.abstractPageBreakAfter || "KPM";
@@ -295,8 +296,8 @@
   function renderGrave() {
     var view = state.view, G = graveOf(view);
     $("subtabs").innerHTML = GVIEWS.map(function (v) {
-      var g = graveOf(v), n = v.charAt(0) === "l" && g ? '<span class="n">' + g.cases.length + "</span>" : "";
-      return '<button type="button" data-view="' + v + '" aria-selected="' + (v === view) + '">' + GLABEL[v] + n + "</button>";
+      var g = graveOf(v), n = v.charAt(0) === "l" && g ? '<span class="n">' + g.cases.filter(function (c) { return c.band === g.labels.gt; }).length + "</span>" : "";
+      return '<button type="button" class="gtab" data-view="' + v + '" aria-selected="' + (v === view) + '">' + GLABEL[v] + n + "</button>";
     }).join("");
     $("subtabs").querySelectorAll("button").forEach(function (b) {
       b.addEventListener("click", function () { go("g", b.dataset.view); });
@@ -353,7 +354,10 @@
     h.push("</tr></tbody></table></div>");
     $("view").innerHTML = h.join("");
     $("view").querySelectorAll("[data-f]").forEach(function (b) {
-      b.addEventListener("click", function () { go("g", lv, JSON.parse(b.dataset.f)); });
+      b.addEventListener("click", function () {
+        var f = JSON.parse(b.dataset.f); if (!f.band) f.band = "ALL";
+        go("g", lv, f);
+      });
     });
   }
 
@@ -370,8 +374,9 @@
     h += '<label>Grave / Non Grave<select id="fGr"><option value="">All</option>' + ["GRAVE", "NON GRAVE"].map(function (s) {
       return "<option" + (f.grave === s ? " selected" : "") + ">" + s + "</option>";
     }).join("") + "</select></label>";
-    h += '<label>Remarks<select id="fBand"><option value="">All</option>' + [L.lt, L.bet, L.gt].map(function (s) {
-      return "<option" + (f.band === s ? " selected" : "") + ">" + esc(s) + "</option>";
+    var cur = gBand(G);
+    h += '<label>Remarks<select id="fBand">' + [[L.gt, L.gt], ["ALL", "All UI cases"], [L.lt, L.lt], [L.bet, L.bet]].map(function (o) {
+      return '<option value="' + esc(o[0]) + '"' + (cur === o[0] ? " selected" : "") + ">" + esc(o[1]) + "</option>";
     }).join("") + "</select></label>";
     h += '<label>Search<input id="fQ" type="search" placeholder="FIR no / section" value="' + esc(f.q) + '"></label>';
     h += '<button class="btn" id="resetBtn" type="button">Reset</button>';
@@ -389,22 +394,29 @@
     };
   }
 
+  /* lists open on UI > 60 / 90 days; "ALL" shows every UI case */
+  function gBand(G) { return state.f.band || G.labels.gt; }
   function graveRows(G) {
-    var f = state.f, q = f.q.trim().toUpperCase(), ps = NCL.key(f.ps);
+    var f = state.f, q = f.q.trim().toUpperCase(), ps = NCL.key(f.ps), band = gBand(G);
     return G.cases.filter(function (o) {
       if (f.sd && o.sd !== f.sd) return false;
       if (ps && NCL.key(o.ps) !== ps) return false;
       if (f.grave && o.grave !== f.grave) return false;
-      if (f.band && o.band !== f.band) return false;
+      if (band !== "ALL" && o.band !== band) return false;
       if (q && (o.fir + " " + o.acts + " " + o.ps).toUpperCase().indexOf(q) < 0) return false;
       return true;
     });
   }
-  function gFiltered() { var f = state.f; return !!(f.sd || f.ps || f.grave || f.band || f.q.trim()); }
+  function gFiltered() { var f = state.f; return !!(f.sd || f.ps || f.grave || (f.band && f.band !== "") || f.q.trim()); }
+  function gListTitle(G) {
+    var b = gBand(G);
+    if (b === G.labels.gt) return G.listTitle;
+    return G.limit + " DAYS CASES - " + (b === "ALL" ? "ALL UI CASES" : b.replace(/_/g, " ")) + " - GRAVE / NON GRAVE AS ON " + G.asOnText;
+  }
 
   function renderGraveList(G) {
     var rows = graveRows(G), L = G.labels, h = [];
-    h.push('<div class="sheet"><h2>' + esc(G.listTitle) + "</h2>");
+    h.push('<div class="sheet"><h2>' + esc(gListTitle(G)) + "</h2>");
     h.push('<p class="count-line no-print">' + rows.length + " case(s)" + (gFiltered() ? " match the filters" : "") + "</p>");
     if (!rows.length) { h.push('<div class="empty">No cases.</div></div>'); $("view").innerHTML = h.join(""); return; }
     h.push("<table><thead><tr><th>S.NO</th><th>POLICE STATION</th><th>FIR NO</th><th>FIR DT</th><th>ACTS &amp; SEC</th>" +
@@ -459,8 +471,9 @@
   }
   function addGraveSheets(wb, L, kind, cases) {
     var G = state.grave[L]; if (!G) return;
-    if (kind !== "list") NCLG.addAbstractSheet(wb, "GRAVE_ABS_" + L, G, cfg.credit, cfg.abstractPageBreakAfter || "KPM");
-    if (kind !== "abstract") NCLG.addListSheet(wb, "GRAVE_UI_" + L, G.listTitle, cases || G.cases, G, cfg.credit);
+    if (kind !== "list") NCLG.addAbstractSheet(wb, "UI_ABSTRACT_" + L + "_DAYS", G, cfg.credit, cfg.abstractPageBreakAfter || "KPM");
+    if (kind !== "abstract") NCLG.addListSheet(wb, "GRAVE_UI_MORETHAN_" + L, cases ? gListTitle(G) : G.listTitle,
+      cases || G.cases.filter(function (c) { return c.band === G.labels.gt; }), G, cfg.credit);
   }
   function exportGraveCurrent() {
     var G = graveOf(state.view); if (!G) return;
@@ -468,7 +481,7 @@
       return loadExcelJS().then(function (X) {
         var wb = new X.Workbook(), isA = state.view.charAt(0) === "a";
         addGraveSheets(wb, G.limit, isA ? "abstract" : "list", isA ? null : graveRows(G));
-        return save(wb, (isA ? "GRAVE_ABS_" : "GRAVE_UI_") + G.limit + "_" + NCL.dmy(state.asOn) + ".xlsx");
+        return save(wb, (isA ? "UI_ABSTRACT_" + G.limit + "_DAYS_CASES_" : G.limit + "_DAYS_CASES_UI_MORETHAN_" + G.limit + "_") + NCL.dmy(state.asOn) + ".xlsx");
       });
     });
   }
@@ -529,10 +542,10 @@
           '<div class="sum" id="aS' + L + '">' + summary(L) + "</div></div>";
       }).join("") +
       '<p class="help">Choose any of the files. 60 / 90 DAYS: columns A:H. CCDASHBOARD: needs POLICE STATION, FIR NO and GRAVE TYPE ' +
-      "(used for the UI - Grave / Non Grave reports). A new file replaces the existing records of that type. " +
+      "(used for the UI - Grave / Non Grave reports). <b>All three files must be chosen together</b>; they replace the existing records. " +
       "The reports behind this window show a preview; nothing is saved until you press Upload.</p>" +
       '<div class="actions"><button class="btn primary" id="aPub" type="button"' +
-      (pending[60] || pending[90] || pending.cc ? "" : " disabled") + ">Upload</button></div>" +
+      ">Upload</button></div>" +
       "<h3>Delete existing records</h3>" +
       '<div class="actions del">' +
       KINDS.map(function (L) {
@@ -606,7 +619,13 @@
 
   function publish() {
     var items = KINDS.filter(function (L) { return pending[L]; }), files = {};
-    if (!auth || !items.length) return;
+    if (!auth) return;
+    var missing = KINDS.filter(function (L) { return !pending[L]; });
+    if (missing.length) {
+      note("err", "Upload not done. Please choose all 3 files — 60 DAYS, 90 DAYS and CCDASHBOARD. Missing: <b>" +
+        missing.map(kindLabel).join(", ") + "</b>.");
+      return;
+    }
     items.forEach(function (L) { files[L] = pending[L]; });
     $("aPub").disabled = true; note("wait", "Uploading…");
     api({ action: "save", files: files }).then(function () {
