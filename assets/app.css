@@ -128,7 +128,7 @@ dialog::backdrop{background:rgba(15,25,45,.5)}
   thead th.gh,thead th.nh{color:#fff!important}
   *{-webkit-print-color-adjust:exact;print-color-adjust:exact}
   .tag{color:inherit!important;font-weight:400!important}
-  .foot{padding:6px 0 0;font-size:9px}
+  .foot{display:none!important}
   th,td{padding:3px 5px;border-color:#000}
 }
 

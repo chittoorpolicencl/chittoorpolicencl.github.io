@@ -472,15 +472,15 @@
       return loadExcelJS().then(function (X) {
         var w = { limit: state.tab, key: state.view };
         if (state.view !== "abstract" && filtered()) w.records = currentRows(R);
-        return save(NCL.buildWorkbook(X, state.rep, [w], cfg.credit, cfg.abstractPageBreakAfter), safeName(R.defs[state.view].sheet) + "_" + NCL.dmy(R.asOn) + ".xlsx");
+        return save(NCL.buildWorkbook(X, state.rep, [w], "", cfg.abstractPageBreakAfter), safeName(R.defs[state.view].sheet) + "_" + NCL.dmy(R.asOn) + ".xlsx");
       });
     });
   }
   function addGraveSheets(wb, L, kind, cases) {
     var G = state.grave[L]; if (!G) return;
-    if (kind !== "list") NCLG.addAbstractSheet(wb, "UI_ABSTRACT_" + L + "_DAYS", G, cfg.credit, cfg.abstractPageBreakAfter || "KPM");
+    if (kind !== "list") NCLG.addAbstractSheet(wb, "UI_ABSTRACT_" + L + "_DAYS", G, "", cfg.abstractPageBreakAfter || "KPM");
     if (kind !== "abstract") NCLG.addListSheet(wb, "GRAVE_UI_MORETHAN_" + L, cases ? gListTitle(G) : G.listTitle,
-      cases || G.cases.filter(function (c) { return c.band === G.labels.gt; }), G, cfg.credit);
+      cases || G.cases.filter(function (c) { return c.band === G.labels.gt; }), G, "");
   }
   function exportGraveCurrent() {
     var G = graveOf(state.view); if (!G) return;
@@ -498,7 +498,7 @@
         var which = [];
         var order = ["abstract", "charged", "totalui", "lt", "bet", "gt", "all"];
         [60, 90].forEach(function (L) { order.forEach(function (v) { which.push({ limit: L, key: v }); }); });
-        var wb = NCL.buildWorkbook(X, state.rep, which, cfg.credit, cfg.abstractPageBreakAfter);
+        var wb = NCL.buildWorkbook(X, state.rep, which, "", cfg.abstractPageBreakAfter);
         [60, 90].forEach(function (L) { addGraveSheets(wb, L); });
         return save(wb, "NCL_60_AND_90_DAYS_REPORTS_" + NCL.dmy(state.asOn) + ".xlsx");
       });
