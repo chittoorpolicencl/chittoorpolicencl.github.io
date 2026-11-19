@@ -158,8 +158,6 @@
       if (R.abstract.unclassified) parts.push(R.abstract.unclassified + " case(s) have a missing or unreadable date and are not counted.");
     }
     var G = state.tab === "g" && graveOf(state.view);
-    if (G && G.notFound) parts.push(G.notFound + " UI case(s) of " + G.limit + " DAYS were not found in the CCDASHBOARD file; they are counted as Non Grave " +
-      "(shown as “Not in CCDASHBOARD” in the UI cases list).");
     if (G && Object.keys(G.unmatched).length) parts.push("<b>Not in the abstract:</b> " + Object.keys(G.unmatched).map(esc).join(", "));
     $("notice").hidden = !parts.length;
     $("notice").innerHTML = parts.join("<br>");
