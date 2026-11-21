@@ -288,7 +288,7 @@
     });
     h.push('<tr class="grand"><td></td><td>Grand Total</td>');
     ab.grand.forEach(function (v, j) { h.push('<td class="' + cls(j) + '">' + cnt(v, { cat: ab.columns[j] }) + "</td>"); });
-    h.push('<td class="num">' + ab.grandTotal + "</td></tr></tbody></table></div>");
+ h.push('<td class="num">' + cnt(ab.grandTotal, {}) + "</td></tr></tbody></table></div>");;
     $("view").innerHTML = h.join("");
     $("view").querySelectorAll("[data-f]").forEach(function (b) {
       b.addEventListener("click", function () { go(state.tab, "all", JSON.parse(b.dataset.f)); });
